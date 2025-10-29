@@ -480,8 +480,11 @@ export default function Page() {
     textRotateOffset={90}
     contentRadiusOffset={720}
     contentLeftScale={1}
-    orbitDirection="cw"
-    initialAngleOffset={-90}
+    // Show first item centered, others below it at load; then scroll brings items up
+    startAngle={-90}
+    endAngle={90}
+    orbitDirection="ccw"
+    initialAngleOffset={90}
     centerContentAtStart
     sweepMultiplier={1.36}
   />

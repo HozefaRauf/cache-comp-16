@@ -1,11 +1,12 @@
 import { cacheLife } from "next/cache";
 
-export default async function UserPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function UserPage({ params }: { params: { slug: string } }) {
     'use cache'
     cacheLife('minutes');
-    
-    const { slug } = await params;
-    const response = await fetch(`https://dummyjson.com/users/${slug}`);
+
+    const { slug } = params;
+    // Ensure this fetch is cacheable during prerender to avoid blocking outside of <Suspense>
+    const response = await fetch(`https://dummyjson.com/users/${slug}` , { next: { revalidate: 60 } });
     const user = await response.json();
 
     return (

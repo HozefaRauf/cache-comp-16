@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Bitcount_Prop_Single, Oswald, Fjalla_One } from "next/font/google";
+import { Geist, Geist_Mono, Oswald, Fjalla_One } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,10 +12,6 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const bitcountPropSingle = Bitcount_Prop_Single({
-  variable: "--font-bitcount-prop-single",
-  subsets: ["latin"],
-});
 
 const oswald = Oswald({
   variable: "--font-oswald",
