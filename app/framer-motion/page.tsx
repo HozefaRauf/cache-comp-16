@@ -20,6 +20,10 @@ type SemiCircleProps = {
   endAngle?: number;   // default -90 (bottom)
   /** Scroll pacing: vh per item (pin height = items.length * pinVHPerItem) */
   pinVHPerItem?: number; // default 28
+  /** Orbit direction of items along the arc */
+  orbitDirection?: 'cw' | 'ccw';
+  /** Starting offset in degrees applied before scroll (positive = clockwise) */
+  initialAngleOffset?: number; // default 0
   /** Text orientation along the tangent: 'cw' | 'ccw' | 'upright' */
   textDirection?: 'cw' | 'ccw' | 'upright';
   /** Extra rotation offset applied to text orientation (degrees) */
@@ -28,6 +32,8 @@ type SemiCircleProps = {
   contentRadiusOffset?: number; // default 160
   /** Horizontal scale for content 'left' position (e.g., 2 doubles distance to the right) */
   contentLeftScale?: number; // default 1
+  /** Center the first content card at screen center on load (horizontal) */
+  centerContentAtStart?: boolean; // default false
   /** Extra classes */
   className?: string;
   textClassName?: string;
@@ -130,10 +136,13 @@ function SemiCircleCarousel({
   startAngle = 90,
   endAngle = -90,
   pinVHPerItem = 28,
-  textDirection = 'cw',
+  orbitDirection = 'cw',
+  initialAngleOffset = 0,
+  textDirection = 'ccw',
   textRotateOffset = 0,
   contentRadiusOffset = 160,
   contentLeftScale = 1,
+  centerContentAtStart = false,
   className,
   textClassName,
 }: SemiCircleProps) {
@@ -151,9 +160,11 @@ function SemiCircleCarousel({
 
   // One sweep across the visible right semicircle (180°) happens during the sticky phase
   const sweep = Math.abs(endAngle - startAngle); // expect 180
-  const angleOffset = useTransform(scrollYProgress, [0, 1], [0, sweep]);
+  const angleOffsetBase = useTransform(scrollYProgress, [0, 1], [0, sweep]);
+  const signed = useTransform(angleOffsetBase, (v) => (orbitDirection === 'ccw' ? -v : v));
+  const angleOffset = useTransform(signed, (v) => v + initialAngleOffset);
   // Provide a non-animating driver for reduced motion so children can always rely on a MotionValue
-  const zeroMV = useMotionValue(0);
+  const zeroMV = useMotionValue(initialAngleOffset);
   const angleDriver = isReduced ? zeroMV : angleOffset;
 
   // local canvas coordinates: we draw a full circle centered at (r,r)
@@ -168,6 +179,23 @@ function SemiCircleCarousel({
   const n = Math.max(items.length, 2);
   const baseAngles = items.map((_, i) => lerp(startAngle, endAngle, n === 1 ? 0 : i / (n - 1)));
   const contentRadius = radius + contentRadiusOffset;
+  // Optional horizontal centering for the first card at start
+  const contentXOffset = useMotionValue(0);
+  React.useEffect(() => {
+    const update = () => {
+      if (!centerContentAtStart) {
+        contentXOffset.set(0);
+        return;
+      }
+      const vw = window.innerWidth || 0;
+      // At angle 0°, x_in_parent = contentRadius; shift so it lands at vw/2
+      const offset = vw / 2 - contentRadius;
+      contentXOffset.set(offset);
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [centerContentAtStart, contentRadius, contentXOffset]);
 
   return (
     <section
@@ -245,27 +273,28 @@ function SemiCircleCarousel({
                 </ul>
 
                 {/* Content UL: orbiting cards placed at a larger radius so they're far from the arc */}
-                <ul className="absolute inset-0 z-10" aria-hidden="true">
-                  {items.map((it, i) => {
-                    const base = baseAngles[i];
-                    return (
-                      <ArcContent
-                        key={`content-${i}`}
-                        contentRadius={contentRadius}
-                        contentLeftScale={contentLeftScale}
-                        cx={cx}
-                        cy={cy}
-                        baseAngle={base}
-                        angleOffset={angleDriver}
-                        isReduced={!!isReduced}
-                        textDirection={textDirection}
-                        textRotateOffset={textRotateOffset}
-                        title={it.title}
-                        description={it.description}
-                      />
-                    );
-                  })}
-                </ul>
+                <motion.div className="absolute inset-0 z-10" style={{ x: contentXOffset }}>
+                  <ul className="absolute inset-0" aria-hidden="true">
+                    {items.map((it, i) => {
+                      const base = baseAngles[i];
+                      return (
+                        <ArcContent
+                          contentRadius={contentRadius}
+                          contentLeftScale={contentLeftScale}
+                          cx={cx}
+                          cy={cy}
+                          baseAngle={base}
+                          angleOffset={angleDriver}
+                          isReduced={!!isReduced}
+                          textDirection={textDirection}
+                          textRotateOffset={textRotateOffset}
+                          title={it.title}
+                          description={it.description}
+                        />
+                      );
+                    })}
+                  </ul>
+                </motion.div>
               </div>
             </div>
           </div>
@@ -351,7 +380,7 @@ function ArcContent({
     >
       <div className="pointer-events-none select-none w-[28rem] md:w-[36rem]">
         <div className="text-sm font-semibold tracking-wider text-neutral-400 uppercase">{title}</div>
-        <div className="mt-3 text-xl md:text-2xl font-medium leading-tight text-neutral-100">{description}</div>
+        <div className="mt-3 text-2xl md:text-3xl font-medium leading-tight text-neutral-100">{description}</div>
       </div>
     </motion.li>
   );
@@ -447,6 +476,9 @@ export default function Page() {
     textRotateOffset={90}
     contentRadiusOffset={720}
     contentLeftScale={1}
+    orbitDirection="cw"
+    initialAngleOffset={-90}
+    centerContentAtStart
   />
     </main>
   );
