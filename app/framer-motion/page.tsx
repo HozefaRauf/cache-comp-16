@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { motion, useScroll, useTransform, MotionValue, useReducedMotion } from 'framer-motion';
+import { motion, useScroll, useTransform, MotionValue, useReducedMotion, useMotionValue } from 'framer-motion';
 
 /* =========================================================
    Types
@@ -24,6 +24,10 @@ type SemiCircleProps = {
   textDirection?: 'cw' | 'ccw' | 'upright';
   /** Extra rotation offset applied to text orientation (degrees) */
   textRotateOffset?: number; // default 0
+  /** Extra outward distance (px) for content cards from the arc radius */
+  contentRadiusOffset?: number; // default 160
+  /** Horizontal scale for content 'left' position (e.g., 2 doubles distance to the right) */
+  contentLeftScale?: number; // default 1
   /** Extra classes */
   className?: string;
   textClassName?: string;
@@ -90,8 +94,7 @@ function ArcLabel({
   const opacity = useTransform(strength, (s) => lerp(0.25, 1, s));
   const scale = useTransform(strength, (s) => lerp(0.92, 1, s));
 
-  // Reduced motion: fix positions from baseAngle without scroll
-  const fallback = !angleOffset && isReduced;
+  // Reduced motion handled upstream by providing a zero MotionValue driver.
 
   return (
     <motion.li
@@ -129,6 +132,8 @@ function SemiCircleCarousel({
   pinVHPerItem = 28,
   textDirection = 'cw',
   textRotateOffset = 0,
+  contentRadiusOffset = 160,
+  contentLeftScale = 1,
   className,
   textClassName,
 }: SemiCircleProps) {
@@ -147,6 +152,9 @@ function SemiCircleCarousel({
   // One sweep across the visible right semicircle (180°) happens during the sticky phase
   const sweep = Math.abs(endAngle - startAngle); // expect 180
   const angleOffset = useTransform(scrollYProgress, [0, 1], [0, sweep]);
+  // Provide a non-animating driver for reduced motion so children can always rely on a MotionValue
+  const zeroMV = useMotionValue(0);
+  const angleDriver = isReduced ? zeroMV : angleOffset;
 
   // local canvas coordinates: we draw a full circle centered at (r,r)
   // then position the canvas left by -r so the vertical diameter hugs the viewport's left edge.
@@ -159,6 +167,7 @@ function SemiCircleCarousel({
   // Precompute base angles for N items evenly spaced along the 180° arc
   const n = Math.max(items.length, 2);
   const baseAngles = items.map((_, i) => lerp(startAngle, endAngle, n === 1 ? 0 : i / (n - 1)));
+  const contentRadius = radius + contentRadiusOffset;
 
   return (
     <section
@@ -175,106 +184,105 @@ function SemiCircleCarousel({
         {/* Sticky viewport */}
         <div ref={stickyRef} className="sticky top-0 h-screen overflow-hidden">
           <div className="relative h-full w-full">
-            {/* Two-column layout: left = arc; right = text panel for the active item's content */}
-            <div className="absolute inset-0 grid grid-cols-12">
-              {/* LEFT: arc canvas (square), center offset so only right half is visible */}
-              <div className="col-span-6 relative">
-                {/* The canvas holds SVG + absolutely positioned labels.
-                    Move it left by -radius so the vertical diameter aligns with the viewport's left edge. */}
-                <div
-                  className="absolute top-1/2 -translate-y-1/2"
-                  style={{ width: canvasSize, height: canvasSize, left: -radius }}
+            {/* Single-panel layout: arc + orbiting content share the same left-axis */}
+            <div className="absolute inset-0">
+              {/* Canvas for arc and labels positioned so the vertical diameter hugs the left edge */}
+              <div
+                className="absolute top-1/2 -translate-y-1/2"
+                style={{ width: canvasSize, height: canvasSize, left: -radius }}
+              >
+                {/* ARC SVG */}
+                <svg
+                  className="absolute inset-0"
+                  width={canvasSize}
+                  height={canvasSize}
+                  viewBox={`0 0 ${canvasSize} ${canvasSize}`}
+                  aria-hidden
                 >
-                  {/* ARC SVG */}
-                  <svg
-                    className="absolute inset-0"
-                    width={canvasSize}
-                    height={canvasSize}
-                    viewBox={`0 0 ${canvasSize} ${canvasSize}`}
-                    aria-hidden
-                  >
-                    {/* Faint background circle */}
-                    <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#0B0B0B" strokeWidth={arcStrokeWidth} />
-                    {/* Visible right semi accent */}
-                    <path
-                      d={describeArc(cx, cy, radius, startAngle, endAngle)}
-                      fill="none"
-                      stroke={arcStroke}
-                      strokeWidth={arcStrokeWidth}
-                      strokeLinecap="round"
-                    />
-                    {/* Rightmost tick */}
-                    <line
-                      x1={cx}
-                      y1={cy}
-                      x2={cx + radius}
-                      y2={cy}
-                      stroke="#6E2DF3"
-                      strokeWidth={2}
-                      opacity={0.7}
-                    />
-                  </svg>
+                  {/* Faint background circle */}
+                  <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#0B0B0B" strokeWidth={arcStrokeWidth} />
+                  {/* Visible right semi accent */}
+                  <path
+                    d={describeArc(cx, cy, radius, startAngle, endAngle)}
+                    fill="none"
+                    stroke={arcStroke}
+                    strokeWidth={arcStrokeWidth}
+                    strokeLinecap="round"
+                  />
+                  {/* Rightmost tick */}
+                  <line
+                    x1={cx}
+                    y1={cy}
+                    x2={cx + radius}
+                    y2={cy}
+                    stroke="#6E2DF3"
+                    strokeWidth={2}
+                    opacity={0.7}
+                  />
+                </svg>
 
-                  {/* Labels UL (markers only; text moved to right panel) */}
-                  <ul className="absolute inset-0">
-                    {items.map((it, i) => {
-                      const base = baseAngles[i];
-                      // Each label gets its own transforms derived from the shared angleOffset
-                      // Left side shows only rotating markers; content is shown on the right panel.
-                      return (
-                        <ArcLabel
-                          key={i}
-                          index={i}
-                          n={n}
-                          radius={radius}
-                          cx={cx}
-                          cy={cy}
-                          baseAngle={base}
-                          angleOffset={isReduced ? (null as any) : angleOffset}
-                          isReduced={!!isReduced}
-                          textDirection={textDirection}
-                          textRotateOffset={textRotateOffset}
-                          textClassName={textClassName}
-                        />
-                      );
-                    })}
-                  </ul>
-                </div>
+                {/* Labels UL (markers only) */}
+                <ul className="absolute inset-0" aria-hidden="true">
+                  {items.map((it, i) => {
+                    const base = baseAngles[i];
+                    return (
+                      <ArcLabel
+                        key={i}
+                        index={i}
+                        n={n}
+                        radius={radius}
+                        cx={cx}
+                        cy={cy}
+                        baseAngle={base}
+                        angleOffset={angleDriver}
+                        isReduced={!!isReduced}
+                        textDirection={textDirection}
+                        textRotateOffset={textRotateOffset}
+                        textClassName={textClassName}
+                      />
+                    );
+                  })}
+                </ul>
+
+                {/* Content UL: orbiting cards placed at a larger radius so they're far from the arc */}
+                <ul className="absolute inset-0 z-10" aria-hidden="true">
+                  {items.map((it, i) => {
+                    const base = baseAngles[i];
+                    return (
+                      <ArcContent
+                        key={`content-${i}`}
+                        contentRadius={contentRadius}
+                        contentLeftScale={contentLeftScale}
+                        cx={cx}
+                        cy={cy}
+                        baseAngle={base}
+                        angleOffset={angleDriver}
+                        isReduced={!!isReduced}
+                        textDirection={textDirection}
+                        textRotateOffset={textRotateOffset}
+                        title={it.title}
+                        description={it.description}
+                      />
+                    );
+                  })}
+                </ul>
               </div>
-
-              {/* RIGHT: text panel with softly rotating, cross-fading items (same size/position) */}
-                     <div className="absolute inset-0 pointer-events-none">
-                       <div className="absolute inset-y-0 right-0 w-1/2 overflow-hidden">
-                         <div
-                           className="absolute top-1/2 -translate-y-1/2"
-                           style={{ width: canvasSize, height: canvasSize, left: -radius }}
-                         >
-                           <ul className="absolute inset-0 z-10">
-                             {items.map((it, i) => {
-                               const base = baseAngles[i];
-                               return (
-                                 <ArcContent
-                                   key={`content-${i}`}
-                                   radius={radius}
-                                   cx={cx}
-                                   cy={cy}
-                                   baseAngle={base}
-                                   angleOffset={isReduced ? (null as any) : angleOffset}
-                                   isReduced={!!isReduced}
-                                   textDirection={textDirection}
-                                   textRotateOffset={textRotateOffset}
-                                   title={it.title}
-                                   description={it.description}
-                                 />
-                               );
-                             })}
-                           </ul>
-                         </div>
-                       </div>
-                     </div>
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Screen-reader friendly, non-animated list of items */}
+      <div className="sr-only" aria-live="polite">
+        <h2>Carousel items</h2>
+        <ul>
+          {items.map((it, i) => (
+            <li key={`sr-${i}`}>
+              <span>{it.title}: </span>
+              <span>{it.description}</span>
+            </li>
+          ))}
+        </ul>
       </div>
 
       {/* After-section to show release */}
@@ -285,9 +293,10 @@ function SemiCircleCarousel({
   );
 }
 
-/* Rotating item card rendered on the shared left-axis and clipped to right half */
+/* Rotating item card rendered on the shared left-axis; uses a larger radius to stay away from the arc */
 function ArcContent({
-  radius,
+  contentRadius,
+  contentLeftScale,
   cx,
   cy,
   baseAngle,
@@ -298,7 +307,8 @@ function ArcContent({
   title,
   description,
 }: {
-  radius: number;
+  contentRadius: number;
+  contentLeftScale: number;
   cx: number;
   cy: number;
   baseAngle: number;
@@ -310,8 +320,9 @@ function ArcContent({
   description: string;
 }) {
   const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
-  const x = useTransform(angleDeg, (a) => cx + radius * Math.cos(deg2rad(a)));
-  const y = useTransform(angleDeg, (a) => cy + radius * Math.sin(deg2rad(a)));
+  const xBase = useTransform(angleDeg, (a) => cx + contentRadius * Math.cos(deg2rad(a)));
+  const x = useTransform(xBase, (v) => v * contentLeftScale);
+  const y = useTransform(angleDeg, (a) => cy + contentRadius * Math.sin(deg2rad(a)));
   const rotCW = useTransform(angleDeg, (a) => a + 90 + textRotateOffset);
   const rotCCW = useTransform(angleDeg, (a) => a - 90 + textRotateOffset);
   const rot: MotionValue<number> | number =
@@ -430,7 +441,13 @@ export default function Page() {
         </div>
       </header>
 
-  <SemiCircleCarousel items={demoItems} textDirection="ccw" textRotateOffset={90} />
+  <SemiCircleCarousel
+    items={demoItems}
+    textDirection="ccw"
+    textRotateOffset={90}
+    contentRadiusOffset={720}
+    contentLeftScale={1}
+  />
     </main>
   );
 }
