@@ -20,6 +20,8 @@ type SemiCircleProps = {
   endAngle?: number;   // default -90 (bottom)
   /** Scroll pacing: vh per item (pin height = items.length * pinVHPerItem) */
   pinVHPerItem?: number; // default 28
+  /** Multiply the sweep angle (180° * sweepMultiplier). Use >1 to allow all items to reach center */
+  sweepMultiplier?: number; // default 1
   /** Orbit direction of items along the arc */
   orbitDirection?: 'cw' | 'ccw';
   /** Starting offset in degrees applied before scroll (positive = clockwise) */
@@ -136,6 +138,7 @@ function SemiCircleCarousel({
   startAngle = 90,
   endAngle = -90,
   pinVHPerItem = 28,
+  sweepMultiplier = 1,
   orbitDirection = 'cw',
   initialAngleOffset = 0,
   textDirection = 'ccw',
@@ -158,9 +161,10 @@ function SemiCircleCarousel({
     offset: ['start start', 'end start'],
   });
 
-  // One sweep across the visible right semicircle (180°) happens during the sticky phase
-  const sweep = Math.abs(endAngle - startAngle); // expect 180
-  const angleOffsetBase = useTransform(scrollYProgress, [0, 1], [0, sweep]);
+  // One sweep across the visible right semicircle (180°) scaled by sweepMultiplier
+  const sweep = Math.abs(endAngle - startAngle); // base 180
+  const totalSweep = sweep * Math.max(1, sweepMultiplier);
+  const angleOffsetBase = useTransform(scrollYProgress, [0, 1], [0, totalSweep]);
   const signed = useTransform(angleOffsetBase, (v) => (orbitDirection === 'ccw' ? -v : v));
   const angleOffset = useTransform(signed, (v) => v + initialAngleOffset);
   // Provide a non-animating driver for reduced motion so children can always rely on a MotionValue
@@ -173,7 +177,7 @@ function SemiCircleCarousel({
   const cx = radius;
   const cy = radius;
 
-  const totalPinHeight = Math.max(items.length, 2) * pinVHPerItem; // in vh
+  const totalPinHeight = Math.max(items.length, 2) * pinVHPerItem * Math.max(1, sweepMultiplier); // in vh
 
   // Precompute base angles for N items evenly spaced along the 180° arc
   const n = Math.max(items.length, 2);
@@ -479,6 +483,7 @@ export default function Page() {
     orbitDirection="cw"
     initialAngleOffset={-90}
     centerContentAtStart
+    sweepMultiplier={1.36}
   />
     </main>
   );
