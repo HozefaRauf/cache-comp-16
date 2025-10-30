@@ -39,6 +39,8 @@ type SemiCircleProps = {
   /** Extra classes */
   className?: string;
   textClassName?: string;
+  /** Additional horizontal nudge to the right as a fraction of semicircle width (0..1) */
+  rightNudgePct?: number; // default 0.12
 };
 
 /* =========================================================
@@ -148,11 +150,22 @@ function SemiCircleCarousel({
   centerContentAtStart = false,
   className,
   textClassName,
+  rightNudgePct = 0.12,
 }: SemiCircleProps) {
   const isReduced = useReducedMotion();
 
   const pinRef = React.useRef<HTMLDivElement | null>(null);
   const stickyRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Dynamically size the visible semicircle to 36% of the viewport width
+  const [vw, setVw] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    const onResize = () => setVw(window.innerWidth || 0);
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const R = vw ? Math.round(vw * 0.36) : radius; // effective radius = 36vw (fallback to prop before mount)
 
   // Scroll progress that starts only once the pinned wrapper reaches the top of the viewport
   // This ensures we "start changing" items only when fully scrolled to the component.
@@ -173,16 +186,16 @@ function SemiCircleCarousel({
 
   // local canvas coordinates: we draw a full circle centered at (r,r)
   // then position the canvas left by -r so the vertical diameter hugs the viewport's left edge.
-  const canvasSize = radius * 2;
-  const cx = radius;
-  const cy = radius;
+  const canvasSize = R * 2;
+  const cx = R;
+  const cy = R;
 
   const totalPinHeight = Math.max(items.length, 2) * pinVHPerItem * Math.max(1, sweepMultiplier); // in vh
 
   // Precompute base angles for N items evenly spaced along the 180° arc
   const n = Math.max(items.length, 2);
   const baseAngles = items.map((_, i) => lerp(startAngle, endAngle, n === 1 ? 0 : i / (n - 1)));
-  const contentRadius = radius + contentRadiusOffset;
+  const contentRadius = R + contentRadiusOffset;
   // Optional horizontal centering for the first card at start
   const contentXOffset = useMotionValue(0);
   React.useEffect(() => {
@@ -194,12 +207,14 @@ function SemiCircleCarousel({
       const vw = window.innerWidth || 0;
       // At angle 0°, x_in_parent = contentRadius; shift so it lands at vw/2
       const offset = vw / 2 - contentRadius;
-      contentXOffset.set(offset);
+      // Nudge items more to the right so they sit further from the arc
+      const contentRightNudge = Math.round(R * rightNudgePct);
+      contentXOffset.set(offset + contentRightNudge);
     };
     update();
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
-  }, [centerContentAtStart, contentRadius, contentXOffset]);
+  }, [centerContentAtStart, contentRadius, contentXOffset, R, rightNudgePct]);
 
   return (
     <section
@@ -214,47 +229,38 @@ function SemiCircleCarousel({
       {/* Pinned region wrapper (height in vh so pacing is consistent) */}
       <div ref={pinRef} style={{ height: `${totalPinHeight}vh` }} className="relative">
         {/* Sticky viewport */}
-        <div ref={stickyRef} className="sticky top-0 h-screen overflow-hidden">
-          <div className="relative h-full w-full">
+  <div ref={stickyRef} className="sticky top-0 h-screen overflow-hidden">
+          <div className="relative h-full w-full isolate">
             {/* Single-panel layout: arc + orbiting content share the same left-axis */}
             <div className="absolute inset-0">
               {/* Canvas for arc and labels positioned so the vertical diameter hugs the left edge */}
               <div
                 className="absolute top-1/2 -translate-y-1/2"
-                style={{ width: canvasSize, height: canvasSize, left: -radius }}
+                // Keep the vertical diameter attached to the left edge by shifting the canvas left by -R
+                style={{ width: canvasSize, height: canvasSize, left: -R }}
               >
                 {/* ARC SVG */}
                 <svg
-                  className="absolute inset-0"
+                  className="absolute inset-0 z-20 pointer-events-none mix-blend-normal overflow-visible"
                   width={canvasSize}
                   height={canvasSize}
                   viewBox={`0 0 ${canvasSize} ${canvasSize}`}
                   aria-hidden
                 >
-                  {/* Faint background circle */}
-                  <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#0B0B0B" strokeWidth={arcStrokeWidth} />
+                  {/* Removed faint background circle to avoid dark overlap on the arc */}
                   {/* Visible right semi accent */}
                   <path
-                    d={describeArc(cx, cy, radius, startAngle, endAngle)}
+                    d={describeArc(cx, cy, R - arcStrokeWidth / 2, startAngle, endAngle)}
                     fill="none"
                     stroke={arcStroke}
                     strokeWidth={arcStrokeWidth}
                     strokeLinecap="round"
                   />
-                  {/* Rightmost tick */}
-                  <line
-                    x1={cx}
-                    y1={cy}
-                    x2={cx + radius}
-                    y2={cy}
-                    stroke="#6E2DF3"
-                    strokeWidth={2}
-                    opacity={0.7}
-                  />
+                  {/* Removed rightmost tick to avoid any visual overlap on the arc */}
                 </svg>
 
                 {/* Labels UL (markers only) */}
-                <ul className="absolute inset-0" aria-hidden="true">
+                <ul className="absolute inset-0 z-20 pointer-events-none" aria-hidden="true">
                   {items.map((it, i) => {
                     const base = baseAngles[i];
                     return (
@@ -262,7 +268,7 @@ function SemiCircleCarousel({
                         key={i}
                         index={i}
                         n={n}
-                        radius={radius}
+                        radius={R}
                         cx={cx}
                         cy={cy}
                         baseAngle={base}
@@ -277,7 +283,7 @@ function SemiCircleCarousel({
                 </ul>
 
                 {/* Content UL: orbiting cards placed at a larger radius so they're far from the arc */}
-                <motion.div className="absolute inset-0 z-10" style={{ x: contentXOffset }}>
+                <motion.div className="absolute inset-0 z-30" style={{ x: contentXOffset }}>
                   <ul className="absolute inset-0" aria-hidden="true">
                     {items.map((it, i) => {
                       const base = baseAngles[i];
@@ -478,13 +484,15 @@ export default function Page() {
     items={demoItems}
     textDirection="ccw"
     textRotateOffset={90}
-    contentRadiusOffset={720}
-    contentLeftScale={1}
+  contentRadiusOffset={860}
+  contentLeftScale={1.06}
+  rightNudgePct={0.32}
     // Show first item centered, others below it at load; then scroll brings items up
     startAngle={-90}
     endAngle={90}
     orbitDirection="ccw"
     initialAngleOffset={90}
+    arcStrokeWidth={48}
     centerContentAtStart
     sweepMultiplier={1.36}
   />
