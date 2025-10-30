@@ -1,7 +1,9 @@
 'use client';
 
 import * as React from 'react';
-import { motion, useScroll, useTransform, MotionValue, useReducedMotion, useMotionValue } from 'framer-motion';
+import { motion, useScroll, useTransform, MotionValue, useReducedMotion, useMotionValue, animate, useSpring } from 'framer-motion';
+import Image from 'next/image';
+import cardImg from './image-card.jpg';
 
 /* =========================================================
    Types
@@ -18,6 +20,11 @@ type SemiCircleProps = {
   /** Start/end angles (deg) for the visible right semicircle sweep */
   startAngle?: number; // default 90  (top)
   endAngle?: number;   // default -90 (bottom)
+  /**
+   * Fraction of the arc span used to place items/labels/dots (0 < itemsSpanPct <= 1).
+   * Smaller values compress items closer together along the arc without changing the visible arc itself.
+   */
+  itemsSpanPct?: number; // default 1
   /** Scroll pacing: vh per item (pin height = items.length * pinVHPerItem) */
   pinVHPerItem?: number; // default 28
   /** Multiply the sweep angle (180° * sweepMultiplier). Use >1 to allow all items to reach center */
@@ -69,6 +76,7 @@ function ArcLabel({
   textDirection,
   textRotateOffset,
   textClassName,
+  thresholdDeg,
 }: {
   index: number;
   n: number;
@@ -81,6 +89,7 @@ function ArcLabel({
   textDirection: 'cw' | 'ccw' | 'upright';
   textRotateOffset: number;
   textClassName?: string;
+  thresholdDeg: number;
 }) {
   // Current angle for this label (deg), animated by scroll
   const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
@@ -94,15 +103,17 @@ function ArcLabel({
   const rot: MotionValue<number> | number =
     textDirection === 'upright' ? textRotateOffset : textDirection === 'cw' ? rotCW : rotCCW;
 
-  // Active strength based on proximity to the rightmost point (0°)
-  const strength = useTransform(angleDeg, (a) => {
-    const dist = Math.abs(((normalizeAngle(a) + 180) % 360) - 180); // [0..180]
-    const s = 1 - Math.min(dist / 90, 1); // 1 near 0°, -> 0 by ±90°
-    return s;
+  // Attraction based on proximity to center (0°), normalized by half the item spacing (thresholdDeg)
+  const attraction = useTransform(angleDeg, (a) => {
+    const dist = Math.abs(((normalizeAngle(a) + 180) % 360) - 180);
+    const th = Math.max(0.001, thresholdDeg);
+    return 1 - Math.min(dist / th, 1);
   });
-
-  const opacity = useTransform(strength, (s) => lerp(0.25, 1, s));
-  const scale = useTransform(strength, (s) => lerp(0.92, 1, s));
+  // Smooth color mix from neutral to emerald as we approach the fixed green dot
+  const dotColor = useTransform(attraction, [0, 1], ['#a3a3a3', '#22c55e']);
+  // Slight emphasis as it nears center
+  const opacity = useTransform(attraction, (t) => lerp(0.9, 1, t));
+  const scale = useTransform(attraction, (t) => lerp(0.98, 1.04, t));
 
   // Reduced motion handled upstream by providing a zero MotionValue driver.
 
@@ -121,10 +132,76 @@ function ArcLabel({
       aria-current={false}
     >
       {/* Marker only (no left-panel text). Adjust size/color as desired. */}
-      <span
-        className="block h-2.5 w-2.5 rounded-full bg-neutral-400 shadow-[0_0_10px_rgba(255,255,255,0.06)]"
+      <motion.span
+        className="block rounded-full shadow-[0_0_10px_rgba(255,255,255,0.06)]"
+        style={{
+          backgroundColor: dotColor,
+          width: index === 0 ? 14 : 10,
+          height: index === 0 ? 14 : 10,
+        }}
         title={`Item ${index + 1}`}
       />
+    </motion.li>
+  );
+}
+
+/* =========================================================
+   Phase label (text) placed near inner arc, follows same motion
+========================================================= */
+function ArcPhaseLabel({
+  label,
+  radius,
+  cx,
+  cy,
+  baseAngle,
+  angleOffset,
+  isReduced,
+  textDirection,
+  textRotateOffset,
+}: {
+  label: string;
+  radius: number;
+  cx: number;
+  cy: number;
+  baseAngle: number;
+  angleOffset: MotionValue<number>;
+  isReduced: boolean;
+  textDirection: 'cw' | 'ccw' | 'upright';
+  textRotateOffset: number;
+}) {
+  const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
+  const x = useTransform(angleDeg, (a) => cx + radius * Math.cos(deg2rad(a)));
+  const y = useTransform(angleDeg, (a) => cy + radius * Math.sin(deg2rad(a)));
+
+  const rotCW = useTransform(angleDeg, (a) => a + 90 + textRotateOffset);
+  const rotCCW = useTransform(angleDeg, (a) => a - 90 + textRotateOffset);
+  const rot: MotionValue<number> | number =
+    textDirection === 'upright' ? textRotateOffset : textDirection === 'cw' ? rotCW : rotCCW;
+
+  // Emphasize when near center (0°) like the cards
+  const strength = useTransform(angleDeg, (a) => {
+    const dist = Math.abs(((normalizeAngle(a) + 180) % 360) - 180);
+    return 1 - Math.min(dist / 90, 1);
+  });
+  const opacity = useTransform(strength, (s) => 0.35 + s * 0.65);
+  const scale = useTransform(strength, (s) => 0.96 + s * 0.04);
+
+  return (
+    <motion.li
+      className="absolute will-change-transform"
+      style={{
+        left: x,
+        top: y,
+        translateX: '-100%', // anchor text to extend inward (left) from the arc
+        translateY: '-50%',
+        rotate: rot,
+        opacity: isReduced ? 1 : opacity,
+        scale: isReduced ? 1 : scale,
+      }}
+    >
+      <span className="text-[24px] md:text-[28px] font-semibold tracking-widest text-neutral-100 uppercase whitespace-nowrap">
+        {label}
+      </span>
     </motion.li>
   );
 }
@@ -139,6 +216,7 @@ function SemiCircleCarousel({
   arcStrokeWidth = 12,
   startAngle = 90,
   endAngle = -90,
+  itemsSpanPct = 1,
   pinVHPerItem = 28,
   sweepMultiplier = 1,
   orbitDirection = 'cw',
@@ -182,7 +260,16 @@ function SemiCircleCarousel({
   const angleOffset = useTransform(signed, (v) => v + initialAngleOffset);
   // Provide a non-animating driver for reduced motion so children can always rely on a MotionValue
   const zeroMV = useMotionValue(initialAngleOffset);
-  const angleDriver = isReduced ? zeroMV : angleOffset;
+  // Smooth the scroll-derived angle with a gentle spring for buttery motion
+  const angleSmoothed = isReduced
+    ? angleOffset
+    : useSpring(angleOffset, { stiffness: 120, damping: 28, mass: 0.8 });
+  const angleDriver = isReduced ? zeroMV : angleSmoothed;
+  // Snap assist: when user stops scrolling and a card's dot is within half-spacing, nudge it to center
+  const snapMV = useMotionValue(0);
+  const angleDriverWithSnap = isReduced
+    ? angleDriver
+    : useTransform([angleDriver, snapMV], (vals) => (vals[0] as number) + (vals[1] as number));
 
   // local canvas coordinates: we draw a full circle centered at (r,r)
   // then position the canvas left by -r so the vertical diameter hugs the viewport's left edge.
@@ -194,7 +281,15 @@ function SemiCircleCarousel({
 
   // Precompute base angles for N items evenly spaced along the 180° arc
   const n = Math.max(items.length, 2);
-  const baseAngles = items.map((_, i) => lerp(startAngle, endAngle, n === 1 ? 0 : i / (n - 1)));
+  // Compress the item spacing along the arc without changing the drawn arc itself
+  const mid = (startAngle + endAngle) / 2;
+  const span = Math.abs(endAngle - startAngle);
+  const effHalfSpan = (span * Math.max(0.05, Math.min(1, itemsSpanPct))) / 2; // clamp to avoid degeneracy
+  const startEff = mid - effHalfSpan;
+  const endEff = mid + effHalfSpan;
+  const baseAngles = items.map((_, i) => lerp(startEff, endEff, n === 1 ? 0 : i / (n - 1)));
+  const deltaDeg = n > 1 ? Math.abs(endEff - startEff) / (n - 1) : span;
+  const thresholdDeg = deltaDeg * 0.35; // smaller threshold for a softer, less aggressive magnet
   const contentRadius = R + contentRadiusOffset;
   // Optional horizontal centering for the first card at start
   const contentXOffset = useMotionValue(0);
@@ -215,6 +310,64 @@ function SemiCircleCarousel({
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
   }, [centerContentAtStart, contentRadius, contentXOffset, R, rightNudgePct]);
+
+  // Idle detection + snap behavior toward nearest center if within half spacing
+  React.useEffect(() => {
+    if (isReduced) return;
+    let timeoutId: number | null = null;
+    const onChange = () => {
+      // cancel scheduled snap and gently release any active snap offset
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (snapMV.get() !== 0) {
+        animate(snapMV, 0, { type: 'spring', stiffness: 260, damping: 34 });
+      }
+      // schedule idle check
+      timeoutId = window.setTimeout(() => {
+        const raw = angleDriver.get();
+        const vel = Math.abs(angleDriver.getVelocity());
+        const velThreshold = 20; // deg/sec; above this we consider user still scrolling
+        if (vel > velThreshold) {
+          return; // don't magnetize while user is still moving
+        }
+        // compute nearest item to center (0°)
+        let bestIdx = 0;
+        let bestAbs = Infinity;
+        for (let i = 0; i < baseAngles.length; i++) {
+          const a = baseAngles[i] + raw;
+          const norm = (((a % 360) + 540) % 360) - 180;
+          const abs = Math.abs(norm);
+          if (abs < bestAbs) {
+            bestAbs = abs;
+            bestIdx = i;
+          }
+        }
+        const delta = n > 1 ? Math.abs(endEff - startEff) / (n - 1) : span;
+        const threshold = delta * 0.35; // softer magnet range
+        if (bestAbs < threshold) {
+          const a = baseAngles[bestIdx] + raw;
+          const norm = (((a % 360) + 540) % 360) - 180;
+          const target = -norm;
+          // if we're essentially centered, lock in precisely and stop
+          if (Math.abs(norm) < 0.5) {
+            snapMV.set(target);
+          } else {
+            animate(snapMV, target, { type: 'spring', stiffness: 90, damping: 34 });
+          }
+        } else {
+          animate(snapMV, 0, { type: 'spring', stiffness: 260, damping: 34 });
+        }
+      }, 300);
+    };
+
+    const unsub = angleDriver.on('change', onChange);
+    return () => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+      unsub();
+    };
+  }, [angleDriver, baseAngles, endEff, isReduced, n, snapMV, startEff, span]);
 
   return (
     <section
@@ -256,27 +409,99 @@ function SemiCircleCarousel({
                     strokeWidth={arcStrokeWidth}
                     strokeLinecap="round"
                   />
+                  {/* Midpoint radial line inside the stroke (bright green) */}
+                  {(() => {
+                    // Short, fixed marker centered in the stroke at 0° (rightmost point)
+                    const midR = R - arcStrokeWidth / 2;
+                    // Make the line length equal to the arc's border thickness
+                    const halfLen = arcStrokeWidth / 2; // total length = arcStrokeWidth
+                    const inner = midR - halfLen;
+                    const outer = midR + halfLen;
+                    const x1 = cx + inner;
+                    const y1 = cy;
+                    const x2 = cx + outer;
+                    const y2 = cy;
+                    const tickWidth = 2; // render as a thin 2px line
+                    return (
+                      <line
+                        x1={x1}
+                        y1={y1}
+                        x2={x2}
+                        y2={y2}
+                        stroke="#22c55e"
+                        strokeWidth={tickWidth}
+                        strokeLinecap="butt" // sharp ends to avoid circular appearance
+                      />
+                    );
+                  })()}
                   {/* Removed rightmost tick to avoid any visual overlap on the arc */}
                 </svg>
+
+                {/* Fixed green magnet dot at the center alignment point */}
+                {(() => {
+                  const labelRadius = R + Math.round(R * 0.08);
+                  const gx = cx + labelRadius;
+                  const gy = cy;
+                  const size = 16; // slightly larger than moving dots
+                  return (
+                    <div
+                      className="absolute"
+                      style={{ left: gx, top: gy, transform: 'translate(-50%, -50%)', zIndex: 25 }}
+                      aria-hidden
+                    >
+                      <span
+                        className="block rounded-full"
+                        style={{ width: size, height: size, backgroundColor: '#22c55e' }}
+                      />
+                    </div>
+                  );
+                })()}
 
                 {/* Labels UL (markers only) */}
                 <ul className="absolute inset-0 z-20 pointer-events-none" aria-hidden="true">
                   {items.map((it, i) => {
                     const base = baseAngles[i];
+                    // Position dots outside the arc's outer edge with ~8% gap of R (4x previous 2%)
+                    const labelRadius = R + Math.round(R * 0.08);
                     return (
                       <ArcLabel
                         key={i}
                         index={i}
                         n={n}
-                        radius={R}
+                        radius={labelRadius}
                         cx={cx}
                         cy={cy}
                         baseAngle={base}
-                        angleOffset={angleDriver}
+                        angleOffset={angleDriverWithSnap}
                         isReduced={!!isReduced}
                         textDirection={textDirection}
                         textRotateOffset={textRotateOffset}
                         textClassName={textClassName}
+                        thresholdDeg={thresholdDeg}
+                      />
+                    );
+                  })}
+                </ul>
+
+                {/* Phase Labels UL: text following inner arc, aligned with cards */}
+                <ul className="absolute inset-0 z-20 pointer-events-none" aria-hidden="true">
+                  {items.map((_, i) => {
+                    const base = baseAngles[i];
+                    const phaseLabel = `PHASE ${i + 1}`;
+                    // Place just inside the arc stroke
+                    const phaseRadius = R - arcStrokeWidth - 20; // inner side of stroke with padding
+                    return (
+                      <ArcPhaseLabel
+                        key={`phase-${i}`}
+                        label={phaseLabel}
+                        radius={phaseRadius}
+                        cx={cx}
+                        cy={cy}
+                        baseAngle={base}
+                        angleOffset={angleDriverWithSnap}
+                        isReduced={!!isReduced}
+                        textDirection={textDirection}
+                        textRotateOffset={textRotateOffset}
                       />
                     );
                   })}
@@ -294,7 +519,7 @@ function SemiCircleCarousel({
                           cx={cx}
                           cy={cy}
                           baseAngle={base}
-                          angleOffset={angleDriver}
+                          angleOffset={angleDriverWithSnap}
                           isReduced={!!isReduced}
                           textDirection={textDirection}
                           textRotateOffset={textRotateOffset}
@@ -389,37 +614,42 @@ function ArcContent({
       }}
     >
       <div className="pointer-events-none select-none w-[600px]">
-        {/* Card matching the provided spec */}
+        {/* Card with header+image in a single row */}
         <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
-          {/* Header */}
-          <div className="mb-6">
-            <h3 className="text-black text-3xl font-bold mb-4">
-              The <span className="font-black">Aspiring</span> Coach
-            </h3>
-            <p className="text-black text-base leading-relaxed">
-              You will first learn how to to confidently navigate a coaching session. You will learn ethical practices and how to establish a powerful coach-client relationship.
-            </p>
-          </div>
-
-          {/* Image */}
-          <div className="mb-6 rounded-2xl overflow-hidden bg-white shadow-lg">
-            <img
-              src="image-card.jpg"
-              alt="Coaching session"
-              className="w-full h-48 object-cover"
-            />
+          {/* Row: Left header, Right image */}
+          <div className="mb-6 flex items-stretch gap-6">
+            {/* Header (left column) */}
+            <div className="flex-1 min-w-0">
+              <h3 className="text-black text-3xl font-bold mb-4">
+                The <span className="font-black">Aspiring</span> Coach
+              </h3>
+              <p className="text-black text-base leading-relaxed">
+                You will first learn how to to confidently navigate a coaching session. You will learn ethical practices and how to establish a powerful coach-client relationship.
+              </p>
+            </div>
+            {/* Image (right column) */}
+            <div className="relative rounded-2xl overflow-hidden bg-white shadow-lg w-56 md:w-64 h-48">
+              <Image
+                src={cardImg}
+                alt="Coaching session"
+                fill
+                sizes="(min-width: 768px) 16rem, 14rem"
+                className="object-cover"
+                priority={false}
+              />
+            </div>
           </div>
 
           {/* Concepts */}
           <div>
             <h4 className="text-black text-xl font-bold mb-4">Concepts Covered</h4>
             <div className="flex flex-wrap gap-2">
-              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">The Coaching Arc</span>
-              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">The Blank Canvas</span>
-              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">The Heroic Lens</span>
-              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">Agenda Setting</span>
-              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">Ethics</span>
-              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">Rapport & Trust</span>
+              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Coaching Arc</span>
+              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Blank Canvas</span>
+              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Heroic Lens</span>
+              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">Agenda Setting</span>
+              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">Ethics</span>
+              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">Rapport & Trust</span>
             </div>
           </div>
 
@@ -476,6 +706,7 @@ export default function Page() {
   contentRadiusOffset={860}
   contentLeftScale={1.06}
   rightNudgePct={0.30}
+    itemsSpanPct={0.6}
     // Show first item centered, others below it at load; then scroll brings items up
     startAngle={-90}
     endAngle={90}
@@ -483,7 +714,7 @@ export default function Page() {
     initialAngleOffset={90}
     arcStrokeWidth={96}
     centerContentAtStart
-    sweepMultiplier={1.9}
+    sweepMultiplier={1.7}
   />
     </main>
   );
