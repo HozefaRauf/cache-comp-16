@@ -1,4 +1,4 @@
-import { cacheLife } from "next/cache";
+import { cacheLife, cacheTag, updateTag } from "next/cache";
 import Link from "next/link";
 import { Suspense } from "react";
 
@@ -14,11 +14,12 @@ type User = {
 async function UserCount() {
   'use cache'
   cacheLife('minutes');
+  cacheTag('users-list');
   
   console.log('🔴 [UserCount] Cache MISS - Fetching from API');
   
-  const response = await fetch('https://dummyjson.com/users?limit=100');
-  const data = await response.json();
+  const users = await userFetcher();
+  const data = { users };
   const fetchTime = new Date().toLocaleTimeString();
   
   return (
@@ -31,13 +32,13 @@ async function UserCount() {
 
 async function FetchUsers() {
   'use cache'
-  cacheLife('seconds');
+  cacheLife('minutes');
+  cacheTag('users-list');
   
   console.log('🔴 [FetchUsers] Cache MISS - Fetching from API');
-  
-  const response = await fetch('https://dummyjson.com/users?limit=100');
-  const data = await response.json();
-  const users: User[] = data.users;
+
+  const users: User[] = await userFetcher();
+  // const users = { data };
   const fetchTime = new Date().toLocaleTimeString();
   
   return (
@@ -75,7 +76,11 @@ export default function UsersPage() {
       <h1 className="text-3xl font-bold mb-8 text-center">
         Users List
       </h1>
-      
+
+      <button onClick={refetchUsers} className="mb-8 px-4 py-2 bg-blue-500 text-white rounded mx-auto block">
+        Refetch Users
+      </button>
+
       <h2 className="text-2xl font-semibold mb-6 text-center">
         Total Users: {" "}
         <Suspense fallback={<span>Loading users...</span>}>
@@ -88,4 +93,16 @@ export default function UsersPage() {
       </Suspense>
     </div>
   );
+}
+
+async function userFetcher() {
+  const response = await fetch('https://dummyjson.com/users?limit=100');
+  const data = await response.json();
+
+  return data.users;
+}
+
+async function refetchUsers() {
+  'use server'
+  updateTag('users-list');
 }

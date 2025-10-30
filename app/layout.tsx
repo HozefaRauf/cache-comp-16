@@ -12,21 +12,21 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const bitcountPropSingle = Bitcount_Prop_Single({
-  variable: "--font-bitcount-prop-single",
-  subsets: ["latin"],
-});
+// const bitcountPropSingle = Bitcount_Prop_Single({
+//   variable: "--font-bitcount-prop-single",
+//   subsets: ["latin"],
+// });
 
-const oswald = Oswald({
-  variable: "--font-oswald",
-  subsets: ["latin"],
-});
+// const oswald = Oswald({
+//   variable: "--font-oswald",
+//   subsets: ["latin"],
+// });
 
-const fjallaOne = Fjalla_One({
-  weight: "400",
-  variable: "--font-fjalla-one",
-  subsets: ["latin"],
-});
+// const fjallaOne = Fjalla_One({
+//   weight: "400",
+//   variable: "--font-fjalla-one",
+//   subsets: ["latin"],
+// });
 
 export const metadata: Metadata = {
   title: "Create Next App",
@@ -41,7 +41,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${fjallaOne.className} antialiased`}
+        className={`antialiased`}
       >
         {children}
       </body>

@@ -134,7 +134,7 @@ function SemiCircleCarousel({
   items,
   radius = 420,
   arcStroke = '#1F2937',
-  arcStrokeWidth = 12,
+  arcStrokeWidth = 120,
   startAngle = 90,
   endAngle = -90,
   pinVHPerItem = 28,
