@@ -266,7 +266,7 @@ function ArcPhaseLabel({
       }}
     >
       <motion.span
-        className="text-[24px] md:text-[28px] font-semibold tracking-widest uppercase whitespace-nowrap"
+        className="text-[12px] sm:text-[16px] md:text-[22px] lg:text-[28px] font-semibold tracking-widest uppercase whitespace-nowrap"
         style={{ color: textColor }}
       >
         {label}
@@ -315,8 +315,12 @@ function SemiCircleCarousel({
 
   // Dynamically size the visible semicircle to 36% of the viewport width
   const [vw, setVw] = React.useState<number | null>(null);
+  const [vh, setVh] = React.useState<number | null>(null);
   React.useEffect(() => {
-    const onResize = () => setVw(window.innerWidth || 0);
+    const onResize = () => {
+      setVw(window.innerWidth || 0);
+      setVh(window.innerHeight || 0);
+    };
     onResize();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
@@ -333,10 +337,13 @@ function SemiCircleCarousel({
     offset: ['start start', 'end start'],
   });
 
-  // Select arc orientation per viewport: mobile uses top semicircle spanning full width
-  const sA = isMobile ? 180 : startAngle;
-  const eA = isMobile ? 0 : endAngle;
-  const centerRefDeg = isMobile ? -90 : 0; // mobile center at top; desktop center at right
+  // Select arc orientation per viewport
+  // Mobile: draw bottom semicircle (0°→180°) positioned at top so arc faces down
+  const sA = isMobile ? 0 : startAngle;
+  const eA = isMobile ? 180 : endAngle;
+  const centerRefDeg = isMobile ? 90 : 0; // mobile center at bottom of arc (90°); desktop at right (0°)
+  // Mobile-only rotation offset for text: force 0 on mobile
+  const effectiveTextRotateOffset = isMobile ? 0 : textRotateOffset;
 
   // One sweep across the visible semicircle scaled by sweepMultiplier
   const sweep = Math.abs(eA - sA); // base 180
@@ -371,9 +378,11 @@ function SemiCircleCarousel({
   });
   const angleOffsetBase = useTransform(paceProgress, [0, 1], [0, totalSweep]);
   const signed = useTransform(angleOffsetBase, (v) => (orbitDirection === 'ccw' ? -v : v));
-  const angleOffset = useTransform(signed, (v) => v + initialAngleOffset);
+  // Mobile-only initial offset: 144° on mobile, prop value elsewhere
+  const effectiveInitialOffset = isMobile ? 144 : initialAngleOffset;
+  const angleOffset = useTransform(signed, (v) => v + effectiveInitialOffset);
   // Provide a non-animating driver for reduced motion so children can always rely on a MotionValue
-  const zeroMV = useMotionValue(initialAngleOffset);
+  const zeroMV = useMotionValue(effectiveInitialOffset);
   // Smooth the scroll-derived angle. Use extra-smooth spring before the 4th card passes center,
   // then blend to the normal spring for a snappier feel afterwards.
   const angleSmoothedFast = useSpring(angleOffset, { stiffness: 90, damping: 30, mass: 1.05 });
@@ -409,7 +418,16 @@ function SemiCircleCarousel({
   const thresholdDeg = deltaDeg * 0.35; // smaller threshold for a softer, less aggressive magnet
   const clearDeg = deltaDeg / 2; // fully clear when within half the original inter-item distance
   const contentRadius = isMobile
-    ? R + Math.max(140, Math.round(R * 0.7)) // mobile: place cards comfortably below the arc
+    ? (() => {
+        // Slightly more separation on mobile (bumped again)
+        if (!vh) return R + Math.max(240, Math.round(R * 1.05));
+        const safeGap = Math.round(arcStrokeW * 0.9) + 84; // +12px more than last tweak
+        const minRadius = R + safeGap;
+        const targetY = Math.round(vh * 0.75); // a bit lower for extra breathing room
+        const desiredRadius = targetY - R; // cy=R and y = cy + radius at 90°
+        const boost = Math.round(R * 0.28); // +4% R over previous boost
+        return Math.max(minRadius, desiredRadius) + boost;
+      })()
     : R + contentRadiusOffset;
 
   // Dynamic slowdown near the nearest center: compress relative angle locally
@@ -620,10 +638,10 @@ function SemiCircleCarousel({
             <div className="absolute inset-0">
               {/* Canvas for arc and labels positioned so the vertical diameter hugs the left edge */}
               <div
-                className={isMobile ? 'absolute top-0' : 'absolute top-1/2 -translate-y-1/2'}
+                className={isMobile ? 'absolute' : 'absolute top-1/2 -translate-y-1/2'}
                 style={
                   isMobile
-                    ? { width: canvasSize, height: canvasSize, left: '50%', transform: 'translate(-50%, 0)' }
+                    ? { width: canvasSize, height: canvasSize, left: '50%', top: -R, transform: 'translate(-50%, 0)' }
                     : { width: canvasSize, height: canvasSize, left: -R }
                 }
               >
@@ -721,7 +739,7 @@ function SemiCircleCarousel({
                         angleOffset={angleDriverWithSnap}
                         isReduced={!!isReduced}
                         textDirection={textDirection}
-                        textRotateOffset={textRotateOffset}
+                        textRotateOffset={effectiveTextRotateOffset}
                         textClassName={textClassName}
                         thresholdDeg={thresholdDeg}
                         clearDeg={clearDeg}
@@ -749,7 +767,7 @@ function SemiCircleCarousel({
                         angleOffset={angleDriverWithSnap}
                         isReduced={!!isReduced}
                         textDirection={textDirection}
-                        textRotateOffset={textRotateOffset}
+                        textRotateOffset={effectiveTextRotateOffset}
                         thresholdDeg={thresholdDeg}
                         clearDeg={clearDeg}
                         centerRefDeg={centerRefDeg}
@@ -774,12 +792,12 @@ function SemiCircleCarousel({
                           angleOffset={angleDriverWithSnap}
                           isReduced={!!isReduced}
                           textDirection={isMobile ? 'upright' : textDirection}
-                          textRotateOffset={textRotateOffset}
+                          textRotateOffset={effectiveTextRotateOffset}
                           title={it.title}
                           description={it.description}
                           clearDeg={clearDeg}
                           centerRefDeg={centerRefDeg}
-                          extraAngleOffsetDeg={isMobile ? 180 : 0}
+                          extraAngleOffsetDeg={0}
                         />
                       );
                     })}
@@ -893,12 +911,12 @@ function ArcContent({
     >
       <div className="pointer-events-none select-none w-[92vw] sm:w-[600px]">
         {/* Card with header+image in a single row */}
-        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
+        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-3xl p-4 sm:p-6 md:p-8 shadow-2xl relative overflow-hidden">
           {/* Row: Left header, Right image */}
-          <div className="mb-6 flex flex-col md:flex-row items-stretch gap-6">
+          <div className="mb-4 sm:mb-6 flex flex-col md:flex-row items-stretch gap-4 md:gap-6">
             {/* Header (left column) */}
             <div className="flex-1 min-w-0">
-              <h3 className="text-black text-2xl sm:text-3xl font-bold mb-4">
+              <h3 className="text-black text-xl sm:text-2xl md:text-3xl font-bold mb-3 sm:mb-4">
                 The <span className="font-black">Aspiring</span> Coach
               </h3>
               <p className="text-black text-sm sm:text-base leading-relaxed">
@@ -906,7 +924,7 @@ function ArcContent({
               </p>
             </div>
             {/* Image (right column) */}
-            <div className="relative rounded-2xl overflow-hidden bg-white shadow-lg w-full md:w-64 h-48">
+            <div className="relative rounded-2xl overflow-hidden bg-white shadow-lg w-full md:w-64 h-40 sm:h-48">
               <Image
                 src={cardImg}
                 alt="Coaching session"
@@ -920,7 +938,7 @@ function ArcContent({
 
           {/* Concepts */}
           <div>
-            <h4 className="text-black text-lg sm:text-xl font-bold mb-4">Concepts Covered</h4>
+            <h4 className="text-black text-base sm:text-lg md:text-xl font-bold mb-3 sm:mb-4">Concepts Covered</h4>
             <div className="flex flex-wrap gap-2">
               <span className="px-3 sm:px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-xs sm:text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Coaching Arc</span>
               <span className="px-3 sm:px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-xs sm:text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Blank Canvas</span>
@@ -932,7 +950,7 @@ function ArcContent({
           </div>
 
           {/* Decorative dot */}
-          <div className="absolute bottom-8 right-8 w-16 h-16 bg-emerald-400 rounded-full opacity-20"></div>
+          <div className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 md:bottom-8 md:right-8 w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 bg-emerald-400 rounded-full opacity-20"></div>
         </div>
       </div>
     </motion.li>
