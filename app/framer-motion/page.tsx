@@ -388,9 +388,44 @@ function ArcContent({
         scale: isReduced ? 1 : scale,
       }}
     >
-      <div className="pointer-events-none select-none w-[28rem] md:w-[36rem]">
-        <div className="text-sm font-semibold tracking-wider text-neutral-400 uppercase">{title}</div>
-        <div className="mt-3 text-2xl md:text-3xl font-medium leading-tight text-neutral-100">{description}</div>
+      <div className="pointer-events-none select-none w-[600px]">
+        {/* Card matching the provided spec */}
+        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
+          {/* Header */}
+          <div className="mb-6">
+            <h3 className="text-black text-3xl font-bold mb-4">
+              The <span className="font-black">Aspiring</span> Coach
+            </h3>
+            <p className="text-black text-base leading-relaxed">
+              You will first learn how to to confidently navigate a coaching session. You will learn ethical practices and how to establish a powerful coach-client relationship.
+            </p>
+          </div>
+
+          {/* Image */}
+          <div className="mb-6 rounded-2xl overflow-hidden bg-white shadow-lg">
+            <img
+              src="image-card.jpg"
+              alt="Coaching session"
+              className="w-full h-48 object-cover"
+            />
+          </div>
+
+          {/* Concepts */}
+          <div>
+            <h4 className="text-black text-xl font-bold mb-4">Concepts Covered</h4>
+            <div className="flex flex-wrap gap-2">
+              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">The Coaching Arc</span>
+              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">The Blank Canvas</span>
+              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">The Heroic Lens</span>
+              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">Agenda Setting</span>
+              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">Ethics</span>
+              <span className="px-4 py-2 bg-emerald-400 text-black text-sm font-medium rounded-full border-2 border-black">Rapport & Trust</span>
+            </div>
+          </div>
+
+          {/* Decorative dot */}
+          <div className="absolute bottom-8 right-8 w-16 h-16 bg-emerald-400 rounded-full opacity-20"></div>
+        </div>
       </div>
     </motion.li>
   );
@@ -418,56 +453,10 @@ function describeArc(cx: number, cy: number, r: number, start: number, end: numb
    Demo page: supply items & render
 ========================================================= */
 const demoItems: CarouselItem[] = [
-  {
-    title: 'Seela Launch',
-    description:
-      'Seela, the pioneering online platform that trains teams in technical and functional cybersecurity.',
-  },
-  {
-    title: 'Pr0ph3cy Launch',
-    description:
-      'Pr0ph3cy secures funding to deliver a comprehensive 360° cybersecurity solution for organizations.',
-  },
-  {
-    title: 'OpenCyber Integration',
-    description:
-      'Opencyber, a leader in penetration testing, joins the group to deepen technical audit capabilities.',
-  },
-  {
-    title: 'Harmony Technology',
-    description:
-      'Harmonie Technologie strengthens strategic cybersecurity consulting across the portfolio.',
-  },
-  {
-    title: 'Seela Evolves',
-    description:
-      'Cyber Unity, Cyber Training, and BattleHack form a dynamic ecosystem for awareness and skills.',
-  },
-  {
-    title: 'NEVERHACK Rebrand',
-    description:
-      'A unified strategy backed by significant investment accelerates European cybersecurity growth.',
-  },
-  {
-    title: 'Expert Line',
-    description:
-      'SOC services scale prevention, detection, and 24/7 remediation of security incidents.',
-  },
-  {
-    title: 'Cybers Joins',
-    description:
-      'Estonia-based Cybers expands SOC expertise and extends operations in Northern Europe.',
-  },
-  {
-    title: 'Innovery Integration',
-    description:
-      'Innovery extends NEVERHACK’s presence across Southern Europe, Mexico, and the United States.',
-  },
-  {
-    title: 'Seela Today',
-    description:
-      'Training teams globally with hands-on programs for both functional and technical cybersecurity.',
-  },
+  { title: 'The Aspiring Coach', description: 'Learn coaching fundamentals' },
+  { title: 'The Aspiring Coach', description: 'Learn coaching fundamentals' },
+  { title: 'The Aspiring Coach', description: 'Learn coaching fundamentals' },
+  { title: 'The Aspiring Coach', description: 'Learn coaching fundamentals' },
 ];
 
 export default function Page() {
@@ -494,7 +483,7 @@ export default function Page() {
     initialAngleOffset={90}
     arcStrokeWidth={96}
     centerContentAtStart
-    sweepMultiplier={1.36}
+    sweepMultiplier={1.9}
   />
     </main>
   );
