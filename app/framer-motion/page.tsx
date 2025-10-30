@@ -85,6 +85,7 @@ function ArcLabel({
   textClassName,
   thresholdDeg,
   clearDeg,
+  centerRefDeg,
 }: {
   index: number;
   n: number;
@@ -99,6 +100,7 @@ function ArcLabel({
   textClassName?: string;
   thresholdDeg: number;
   clearDeg: number;
+  centerRefDeg: number;
 }) {
   // Current angle for this label (deg), animated by scroll
   const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
@@ -114,7 +116,8 @@ function ArcLabel({
 
   // Attraction based on proximity to center (0°), normalized by half the item spacing (thresholdDeg)
   const attraction = useTransform(angleDeg, (ang) => {
-    const dist = Math.abs(((normalizeAngle(ang) + 180) % 360) - 180);
+    const d = ang - centerRefDeg;
+    const dist = Math.abs((((normalizeAngle(d) + 180) % 360) - 180));
     const th = Math.max(0.001, thresholdDeg);
     return 1 - Math.min(dist / th, 1);
   });
@@ -125,7 +128,8 @@ function ArcLabel({
   // items approaching from below (negative signed angle) fade in;
   // items moving above center (positive) fade out faster (half distance).
   const signedDist = useTransform(angleDeg, (a) => {
-    const norm = (((normalizeAngle(a) + 180) % 360) - 180);
+    const d = a - centerRefDeg;
+    const norm = (((normalizeAngle(d) + 180) % 360) - 180);
     return norm; // deg, negative = below, positive = above
   });
   const fadeT = useTransform(signedDist, (d) => {
@@ -191,6 +195,7 @@ function ArcPhaseLabel({
   textRotateOffset,
   thresholdDeg,
   clearDeg,
+  centerRefDeg,
 }: {
   label: string;
   radius: number;
@@ -203,6 +208,7 @@ function ArcPhaseLabel({
   textRotateOffset: number;
   thresholdDeg: number;
   clearDeg: number;
+  centerRefDeg: number;
 }) {
   const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
   const x = useTransform(angleDeg, (a) => cx + radius * Math.cos(deg2rad(a)));
@@ -215,7 +221,8 @@ function ArcPhaseLabel({
 
   // Directional fade/blur relative to center (0°)
   const signedDist = useTransform(angleDeg, (a) => {
-    const norm = (((normalizeAngle(a) + 180) % 360) - 180);
+    const d = a - centerRefDeg;
+    const norm = (((normalizeAngle(d) + 180) % 360) - 180);
     return norm;
   });
   const fadeT = useTransform(signedDist, (d) => {
@@ -237,7 +244,8 @@ function ArcPhaseLabel({
 
   // Smooth color change to green when near center, analogous to dots
   const attraction = useTransform(angleDeg, (a) => {
-    const dist = Math.abs(((normalizeAngle(a) + 180) % 360) - 180);
+    const d = a - centerRefDeg;
+    const dist = Math.abs((((normalizeAngle(d) + 180) % 360) - 180));
     const th = Math.max(0.001, thresholdDeg);
     return 1 - Math.min(dist / th, 1);
   });
@@ -313,7 +321,10 @@ function SemiCircleCarousel({
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  const R = vw ? Math.round(vw * 0.36) : radius; // effective radius = 36vw (fallback to prop before mount)
+  const isMobile = (vw ?? 0) < 768;
+  const R = vw ? (isMobile ? Math.round((vw) / 2) : Math.round(vw * 0.36)) : radius; // mobile: span full width; else 36vw
+  // Responsive arc stroke: slimmer on small screens for a cleaner mobile look
+  const arcStrokeW = isMobile ? Math.min(64, Math.max(36, Math.round(R * 0.14))) : arcStrokeWidth;
 
   // Scroll progress that starts only once the pinned wrapper reaches the top of the viewport
   // This ensures we "start changing" items only when fully scrolled to the component.
@@ -322,14 +333,19 @@ function SemiCircleCarousel({
     offset: ['start start', 'end start'],
   });
 
-  // One sweep across the visible right semicircle (180°) scaled by sweepMultiplier
-  const sweep = Math.abs(endAngle - startAngle); // base 180
+  // Select arc orientation per viewport: mobile uses top semicircle spanning full width
+  const sA = isMobile ? 180 : startAngle;
+  const eA = isMobile ? 0 : endAngle;
+  const centerRefDeg = isMobile ? -90 : 0; // mobile center at top; desktop center at right
+
+  // One sweep across the visible semicircle scaled by sweepMultiplier
+  const sweep = Math.abs(eA - sA); // base 180
   const totalSweep = sweep * Math.max(1, sweepMultiplier);
 
   // Precompute base angles for N items (used for pacing breakpoint)
   const n = Math.max(items.length, 2);
-  const mid = (startAngle + endAngle) / 2;
-  const span = Math.abs(endAngle - startAngle);
+  const mid = (sA + eA) / 2;
+  const span = Math.abs(eA - sA);
   const effHalfSpan = (span * Math.max(0.05, Math.min(1, itemsSpanPct))) / 2; // clamp to avoid degeneracy
   const startEff = mid - effHalfSpan;
   const endEff = mid + effHalfSpan;
@@ -392,7 +408,9 @@ function SemiCircleCarousel({
   const deltaDeg = n > 1 ? Math.abs(endEff - startEff) / (n - 1) : span;
   const thresholdDeg = deltaDeg * 0.35; // smaller threshold for a softer, less aggressive magnet
   const clearDeg = deltaDeg / 2; // fully clear when within half the original inter-item distance
-  const contentRadius = R + contentRadiusOffset;
+  const contentRadius = isMobile
+    ? R + Math.max(140, Math.round(R * 0.7)) // mobile: place cards comfortably below the arc
+    : R + contentRadiusOffset;
 
   // Dynamic slowdown near the nearest center: compress relative angle locally
   const slowRadius = clearDeg; // start slowing within the clear zone
@@ -405,7 +423,8 @@ function SemiCircleCarousel({
         let bestAbs = Infinity;
         for (let i = 0; i < baseAngles.length; i++) {
           const r = baseAngles[i] + a;
-          const norm = (((r % 360) + 540) % 360) - 180; // signed distance to center
+          const d = r - centerRefDeg;
+          const norm = (((d % 360) + 540) % 360) - 180; // signed distance to centerRef
           const abs = Math.abs(norm);
           if (abs < bestAbs) {
             bestAbs = abs;
@@ -414,7 +433,8 @@ function SemiCircleCarousel({
         }
         // signed distance to center for nearest item
         const r = nearest + a;
-        const norm = (((r % 360) + 540) % 360) - 180;
+        const d = r - centerRefDeg;
+        const norm = (((d % 360) + 540) % 360) - 180;
         const t = Math.min(Math.abs(norm) / Math.max(0.001, slowRadius), 1);
         // ease so slowdown concentrates very near center
         const easeOut = 1 - Math.pow(1 - t, 2.2);
@@ -432,7 +452,7 @@ function SemiCircleCarousel({
   const contentXOffset = useMotionValue(0);
   React.useEffect(() => {
     const update = () => {
-      if (!centerContentAtStart) {
+      if (!centerContentAtStart || isMobile) {
         contentXOffset.set(0);
         return;
       }
@@ -474,7 +494,8 @@ function SemiCircleCarousel({
         let bestAbs = Infinity;
         for (let i = 0; i < baseAngles.length; i++) {
           const a = baseAngles[i] + raw;
-          const norm = (((a % 360) + 540) % 360) - 180;
+          const d = a - centerRefDeg;
+          const norm = (((d % 360) + 540) % 360) - 180;
           const abs = Math.abs(norm);
           if (abs < bestAbs) {
             bestAbs = abs;
@@ -505,7 +526,8 @@ function SemiCircleCarousel({
         // If we're extremely close to center and not moving excessively fast, trigger dwell regardless of direction
         if (!dwellRef.current.active && bestAbs < dwellEnter && vel <= dwellVelMax) {
           const a = baseAngles[bestIdx] + raw;
-          const norm = (((a % 360) + 540) % 360) - 180;
+          const d = a - centerRefDeg;
+          const norm = (((d % 360) + 540) % 360) - 180;
           const target = -norm;
           dwellRef.current.active = true;
           dwellRef.current.idx = bestIdx;
@@ -521,7 +543,8 @@ function SemiCircleCarousel({
 
         if ((vel <= velThreshold && bestAbs < threshold) || (nearWhileScrolling && bestAbs < threshold * 0.4)) {
           const a = baseAngles[bestIdx] + raw;
-          const norm = (((a % 360) + 540) % 360) - 180;
+          const d = a - centerRefDeg;
+          const norm = (((d % 360) + 540) % 360) - 180;
           const target = -norm;
           // if we're essentially centered, lock in precisely and stop
           if (Math.abs(norm) < 0.8) {
@@ -597,9 +620,12 @@ function SemiCircleCarousel({
             <div className="absolute inset-0">
               {/* Canvas for arc and labels positioned so the vertical diameter hugs the left edge */}
               <div
-                className="absolute top-1/2 -translate-y-1/2"
-                // Keep the vertical diameter attached to the left edge by shifting the canvas left by -R
-                style={{ width: canvasSize, height: canvasSize, left: -R }}
+                className={isMobile ? 'absolute top-0' : 'absolute top-1/2 -translate-y-1/2'}
+                style={
+                  isMobile
+                    ? { width: canvasSize, height: canvasSize, left: '50%', transform: 'translate(-50%, 0)' }
+                    : { width: canvasSize, height: canvasSize, left: -R }
+                }
               >
                 {/* ARC SVG */}
                 <svg
@@ -618,24 +644,28 @@ function SemiCircleCarousel({
                     </linearGradient>
                   </defs>
                   <path
-                    d={describeArc(cx, cy, R - arcStrokeWidth / 2, startAngle, endAngle)}
+                    d={describeArc(cx, cy, R - arcStrokeW / 2, sA, eA)}
                     fill="none"
                     stroke="url(#arcGrad)"
-                    strokeWidth={arcStrokeWidth}
+                    strokeWidth={arcStrokeW}
                     strokeLinecap="round"
                   />
                   {/* Midpoint radial line inside the stroke (bright green) */}
                   {(() => {
                     // Short, fixed marker centered in the stroke at 0° (rightmost point)
-                    const midR = R - arcStrokeWidth / 2;
+                    const midR = R - arcStrokeW / 2;
                     // Make the line length equal to the arc's border thickness
-                    const halfLen = arcStrokeWidth / 2; // total length = arcStrokeWidth
+                    const halfLen = arcStrokeW / 2; // total length = arcStrokeW
                     const inner = midR - halfLen;
                     const outer = midR + halfLen;
-                    const x1 = cx + inner;
-                    const y1 = cy;
-                    const x2 = cx + outer;
-                    const y2 = cy;
+                    // Draw tick at the center reference angle
+                    const ax = (r: number, deg: number) => ({ x: cx + r * Math.cos(deg2rad(deg)), y: cy + r * Math.sin(deg2rad(deg)) });
+                    const p1 = ax(inner, centerRefDeg);
+                    const p2 = ax(outer, centerRefDeg);
+                    const x1 = p1.x;
+                    const y1 = p1.y;
+                    const x2 = p2.x;
+                    const y2 = p2.y;
                     const tickWidth = 2; // render as a thin 2px line
                     return (
                       <line
@@ -654,9 +684,10 @@ function SemiCircleCarousel({
 
                 {/* Fixed green magnet dot at the center alignment point */}
                 {(() => {
+                  // Place the magnet dot outside the arc border on mobile and desktop
                   const labelRadius = R + Math.round(R * 0.08);
-                  const gx = cx + labelRadius;
-                  const gy = cy;
+                  const gx = cx + labelRadius * Math.cos(deg2rad(centerRefDeg));
+                  const gy = cy + labelRadius * Math.sin(deg2rad(centerRefDeg));
                   const size = 16; // slightly larger than moving dots
                   return (
                     <div
@@ -676,7 +707,7 @@ function SemiCircleCarousel({
                 <ul className="absolute inset-0 z-20 pointer-events-none" aria-hidden="true">
                   {items.map((it, i) => {
                     const base = baseAngles[i];
-                    // Position dots outside the arc's outer edge with ~8% gap of R (4x previous 2%)
+                    // Dots outside the arc with ~8% gap of R on all viewports
                     const labelRadius = R + Math.round(R * 0.08);
                     return (
                       <ArcLabel
@@ -694,6 +725,7 @@ function SemiCircleCarousel({
                         textClassName={textClassName}
                         thresholdDeg={thresholdDeg}
                         clearDeg={clearDeg}
+                        centerRefDeg={centerRefDeg}
                       />
                     );
                   })}
@@ -704,8 +736,8 @@ function SemiCircleCarousel({
                   {items.map((_, i) => {
                     const base = baseAngles[i];
                     const phaseLabel = `PHASE ${i + 1}`;
-                    // Place just inside the arc stroke
-                    const phaseRadius = R - arcStrokeWidth - 20; // inner side of stroke with padding
+                    // Place near the inner edge of the arc stroke for crisp alignment (slightly inside on mobile)
+                    const phaseRadius = isMobile ? (R - Math.round(arcStrokeW * 0.5) - 10) : (R - arcStrokeW - 20);
                     return (
                       <ArcPhaseLabel
                         key={`phase-${i}`}
@@ -720,6 +752,7 @@ function SemiCircleCarousel({
                         textRotateOffset={textRotateOffset}
                         thresholdDeg={thresholdDeg}
                         clearDeg={clearDeg}
+                        centerRefDeg={centerRefDeg}
                       />
                     );
                   })}
@@ -734,17 +767,19 @@ function SemiCircleCarousel({
                         <ArcContent
                           key={`content-${i}`}
                           contentRadius={contentRadius}
-                          contentLeftScale={contentLeftScale}
+                          contentLeftScale={isMobile ? 1 : contentLeftScale}
                           cx={cx}
                           cy={cy}
                           baseAngle={base}
                           angleOffset={angleDriverWithSnap}
                           isReduced={!!isReduced}
-                          textDirection={textDirection}
+                          textDirection={isMobile ? 'upright' : textDirection}
                           textRotateOffset={textRotateOffset}
                           title={it.title}
                           description={it.description}
                           clearDeg={clearDeg}
+                          centerRefDeg={centerRefDeg}
+                          extraAngleOffsetDeg={isMobile ? 180 : 0}
                         />
                       );
                     })}
@@ -791,6 +826,8 @@ function ArcContent({
   title,
   description,
   clearDeg,
+  centerRefDeg,
+  extraAngleOffsetDeg = 0,
 }: {
   contentRadius: number;
   contentLeftScale: number;
@@ -804,8 +841,11 @@ function ArcContent({
   title: string;
   description: string;
   clearDeg: number;
+  centerRefDeg: number;
+  extraAngleOffsetDeg?: number;
 }) {
-  const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
+  const dotAngleDeg = useTransform(angleOffset, (off) => baseAngle + off);
+  const angleDeg = useTransform(angleOffset, (off) => baseAngle + off + extraAngleOffsetDeg);
   const xBase = useTransform(angleDeg, (a) => cx + contentRadius * Math.cos(deg2rad(a)));
   const x = useTransform(xBase, (v) => v * contentLeftScale);
   const y = useTransform(angleDeg, (a) => cy + contentRadius * Math.sin(deg2rad(a)));
@@ -815,8 +855,9 @@ function ArcContent({
     textDirection === 'upright' ? textRotateOffset : textDirection === 'cw' ? rotCW : rotCCW;
 
   // Directional fade/blur relative to center with faster fade when moving up
-  const signedDist = useTransform(angleDeg, (a) => {
-    const norm = (((normalizeAngle(a) + 180) % 360) - 180);
+  const signedDist = useTransform(dotAngleDeg, (a) => {
+    const d = a - centerRefDeg;
+    const norm = (((normalizeAngle(d) + 180) % 360) - 180);
     return norm;
   });
   const fadeT = useTransform(signedDist, (d) => {
@@ -850,27 +891,27 @@ function ArcContent({
         filter: isReduced ? 'none' : blur,
       }}
     >
-      <div className="pointer-events-none select-none w-[600px]">
+      <div className="pointer-events-none select-none w-[92vw] sm:w-[600px]">
         {/* Card with header+image in a single row */}
-        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
+        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
           {/* Row: Left header, Right image */}
-          <div className="mb-6 flex items-stretch gap-6">
+          <div className="mb-6 flex flex-col md:flex-row items-stretch gap-6">
             {/* Header (left column) */}
             <div className="flex-1 min-w-0">
-              <h3 className="text-black text-3xl font-bold mb-4">
+              <h3 className="text-black text-2xl sm:text-3xl font-bold mb-4">
                 The <span className="font-black">Aspiring</span> Coach
               </h3>
-              <p className="text-black text-base leading-relaxed">
+              <p className="text-black text-sm sm:text-base leading-relaxed">
                 You will first learn how to to confidently navigate a coaching session. You will learn ethical practices and how to establish a powerful coach-client relationship.
               </p>
             </div>
             {/* Image (right column) */}
-            <div className="relative rounded-2xl overflow-hidden bg-white shadow-lg w-56 md:w-64 h-48">
+            <div className="relative rounded-2xl overflow-hidden bg-white shadow-lg w-full md:w-64 h-48">
               <Image
                 src={cardImg}
                 alt="Coaching session"
                 fill
-                sizes="(min-width: 768px) 16rem, 14rem"
+                sizes="(min-width: 768px) 16rem, 92vw"
                 className="object-cover"
                 priority={false}
               />
@@ -879,14 +920,14 @@ function ArcContent({
 
           {/* Concepts */}
           <div>
-            <h4 className="text-black text-xl font-bold mb-4">Concepts Covered</h4>
+            <h4 className="text-black text-lg sm:text-xl font-bold mb-4">Concepts Covered</h4>
             <div className="flex flex-wrap gap-2">
-              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Coaching Arc</span>
-              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Blank Canvas</span>
-              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Heroic Lens</span>
-              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">Agenda Setting</span>
-              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">Ethics</span>
-              <span className="px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">Rapport & Trust</span>
+              <span className="px-3 sm:px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-xs sm:text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Coaching Arc</span>
+              <span className="px-3 sm:px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-xs sm:text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Blank Canvas</span>
+              <span className="px-3 sm:px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-xs sm:text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">The Heroic Lens</span>
+              <span className="px-3 sm:px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-xs sm:text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">Agenda Setting</span>
+              <span className="px-3 sm:px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-xs sm:text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">Ethics</span>
+              <span className="px-3 sm:px-4 py-2 rounded-full backdrop-blur-md bg-white/20 text-black text-xs sm:text-sm font-medium border border-white/30 shadow-[0_4px_16px_rgba(0,0,0,0.12)]">Rapport & Trust</span>
             </div>
           </div>
 
@@ -928,7 +969,7 @@ const demoItems: CarouselItem[] = [
 
 export default function Page() {
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-200">
+    <main className="min-h-screen bg-white text-neutral-800">
       <header className="sticky top-0 z-10 border-b border-neutral-200 bg-white/70 backdrop-blur">
         <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
           <span className="font-semibold tracking-wide text-neutral-700">SemiCircle Carousel • Framer Motion</span>
