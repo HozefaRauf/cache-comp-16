@@ -48,6 +48,8 @@ type SemiCircleProps = {
   textClassName?: string;
   /** Additional horizontal nudge to the right as a fraction of semicircle width (0..1) */
   rightNudgePct?: number; // default 0.12
+  /** Ignore the OS/browser reduced-motion preference and always animate */
+  ignoreReducedMotion?: boolean; // default false
 };
 
 /* =========================================================
@@ -77,6 +79,7 @@ function ArcLabel({
   textRotateOffset,
   textClassName,
   thresholdDeg,
+  clearDeg,
 }: {
   index: number;
   n: number;
@@ -90,6 +93,7 @@ function ArcLabel({
   textRotateOffset: number;
   textClassName?: string;
   thresholdDeg: number;
+  clearDeg: number;
 }) {
   // Current angle for this label (deg), animated by scroll
   const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
@@ -104,16 +108,37 @@ function ArcLabel({
     textDirection === 'upright' ? textRotateOffset : textDirection === 'cw' ? rotCW : rotCCW;
 
   // Attraction based on proximity to center (0°), normalized by half the item spacing (thresholdDeg)
-  const attraction = useTransform(angleDeg, (a) => {
-    const dist = Math.abs(((normalizeAngle(a) + 180) % 360) - 180);
+  const attraction = useTransform(angleDeg, (ang) => {
+    const dist = Math.abs(((normalizeAngle(ang) + 180) % 360) - 180);
     const th = Math.max(0.001, thresholdDeg);
     return 1 - Math.min(dist / th, 1);
   });
   // Smooth color mix from neutral to emerald as we approach the fixed green dot
   const dotColor = useTransform(attraction, [0, 1], ['#a3a3a3', '#22c55e']);
-  // Slight emphasis as it nears center
-  const opacity = useTransform(attraction, (t) => lerp(0.9, 1, t));
-  const scale = useTransform(attraction, (t) => lerp(0.98, 1.04, t));
+  
+  // Directional fade/blur relative to center (0°):
+  // items approaching from below (negative signed angle) fade in;
+  // items moving above center (positive) fade out faster (half distance).
+  const signedDist = useTransform(angleDeg, (a) => {
+    const norm = (((normalizeAngle(a) + 180) % 360) - 180);
+    return norm; // deg, negative = below, positive = above
+  });
+  const fadeT = useTransform(signedDist, (d) => {
+    const absd = Math.abs(d);
+    const clear = Math.max(0.001, clearDeg);
+    const over = Math.max(0, absd - clear);
+    const denom = d > 0 ? clear : clear * 2; // faster fade out above, slower below
+    return Math.min(over / Math.max(0.001, denom), 1);
+  });
+  const opacity = useTransform(fadeT, (t) => 0.08 + Math.pow(1 - t, 0.9) * 0.92);
+  const scale = useTransform(fadeT, (t) => lerp(0.96, 1.06, 1 - t));
+  const blur = useTransform([fadeT, signedDist], (vals) => {
+    const t = vals[0] as number;
+    const d = vals[1] as number;
+    const maxBlur = d > 0 ? 6 : 4; // slightly blurrier when above center
+    const px = maxBlur * Math.pow(t, 0.8);
+    return `blur(${px.toFixed(2)}px)`;
+  });
 
   // Reduced motion handled upstream by providing a zero MotionValue driver.
 
@@ -128,6 +153,7 @@ function ArcLabel({
         rotate: rot,
         opacity: isReduced ? 1 : opacity,
         scale: isReduced ? 1 : scale,
+        filter: isReduced ? 'none' : blur,
       }}
       aria-current={false}
     >
@@ -158,6 +184,8 @@ function ArcPhaseLabel({
   isReduced,
   textDirection,
   textRotateOffset,
+  thresholdDeg,
+  clearDeg,
 }: {
   label: string;
   radius: number;
@@ -168,6 +196,8 @@ function ArcPhaseLabel({
   isReduced: boolean;
   textDirection: 'cw' | 'ccw' | 'upright';
   textRotateOffset: number;
+  thresholdDeg: number;
+  clearDeg: number;
 }) {
   const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
   const x = useTransform(angleDeg, (a) => cx + radius * Math.cos(deg2rad(a)));
@@ -178,13 +208,35 @@ function ArcPhaseLabel({
   const rot: MotionValue<number> | number =
     textDirection === 'upright' ? textRotateOffset : textDirection === 'cw' ? rotCW : rotCCW;
 
-  // Emphasize when near center (0°) like the cards
-  const strength = useTransform(angleDeg, (a) => {
-    const dist = Math.abs(((normalizeAngle(a) + 180) % 360) - 180);
-    return 1 - Math.min(dist / 90, 1);
+  // Directional fade/blur relative to center (0°)
+  const signedDist = useTransform(angleDeg, (a) => {
+    const norm = (((normalizeAngle(a) + 180) % 360) - 180);
+    return norm;
   });
-  const opacity = useTransform(strength, (s) => 0.35 + s * 0.65);
-  const scale = useTransform(strength, (s) => 0.96 + s * 0.04);
+  const fadeT = useTransform(signedDist, (d) => {
+    const absd = Math.abs(d);
+    const clear = Math.max(0.001, clearDeg);
+    const over = Math.max(0, absd - clear);
+    const denom = d > 0 ? clear : clear * 2;
+    return Math.min(over / Math.max(0.001, denom), 1);
+  });
+  const opacity = useTransform(fadeT, (t) => 0.08 + Math.pow(1 - t, 0.9) * 0.92);
+  const scale = useTransform(fadeT, (t) => 0.96 + (1 - t) * 0.04);
+  const blur = useTransform([fadeT, signedDist], (vals) => {
+    const t = vals[0] as number;
+    const d = vals[1] as number;
+    const maxBlur = d > 0 ? 6 : 4;
+    const px = maxBlur * Math.pow(t, 0.8);
+    return `blur(${px.toFixed(2)}px)`;
+  });
+
+  // Smooth color change to green when near center, analogous to dots
+  const attraction = useTransform(angleDeg, (a) => {
+    const dist = Math.abs(((normalizeAngle(a) + 180) % 360) - 180);
+    const th = Math.max(0.001, thresholdDeg);
+    return 1 - Math.min(dist / th, 1);
+  });
+  const textColor = useTransform(attraction, [0, 1], ['#374151', '#22c55e']); // neutral-700 to emerald-500
 
   return (
     <motion.li
@@ -197,11 +249,15 @@ function ArcPhaseLabel({
         rotate: rot,
         opacity: isReduced ? 1 : opacity,
         scale: isReduced ? 1 : scale,
+        filter: isReduced ? 'none' : blur,
       }}
     >
-      <span className="text-[24px] md:text-[28px] font-semibold tracking-widest text-neutral-100 uppercase whitespace-nowrap">
+      <motion.span
+        className="text-[24px] md:text-[28px] font-semibold tracking-widest uppercase whitespace-nowrap"
+        style={{ color: textColor }}
+      >
         {label}
-      </span>
+      </motion.span>
     </motion.li>
   );
 }
@@ -229,8 +285,10 @@ function SemiCircleCarousel({
   className,
   textClassName,
   rightNudgePct = 0.12,
+  ignoreReducedMotion = false,
 }: SemiCircleProps) {
-  const isReduced = useReducedMotion();
+  const prefersReduced = useReducedMotion();
+  const isReduced = ignoreReducedMotion ? false : prefersReduced;
 
   const pinRef = React.useRef<HTMLDivElement | null>(null);
   const stickyRef = React.useRef<HTMLDivElement | null>(null);
@@ -261,15 +319,12 @@ function SemiCircleCarousel({
   // Provide a non-animating driver for reduced motion so children can always rely on a MotionValue
   const zeroMV = useMotionValue(initialAngleOffset);
   // Smooth the scroll-derived angle with a gentle spring for buttery motion
-  const angleSmoothed = isReduced
-    ? angleOffset
-    : useSpring(angleOffset, { stiffness: 120, damping: 28, mass: 0.8 });
+  const angleSmoothed = useSpring(angleOffset, { stiffness: 120, damping: 28, mass: 0.8 });
   const angleDriver = isReduced ? zeroMV : angleSmoothed;
   // Snap assist: when user stops scrolling and a card's dot is within half-spacing, nudge it to center
   const snapMV = useMotionValue(0);
-  const angleDriverWithSnap = isReduced
-    ? angleDriver
-    : useTransform([angleDriver, snapMV], (vals) => (vals[0] as number) + (vals[1] as number));
+  const angleWithSnap = useTransform([angleDriver, snapMV], (vals) => (vals[0] as number) + (vals[1] as number));
+  const angleDriverWithSnap = isReduced ? angleDriver : angleWithSnap;
 
   // local canvas coordinates: we draw a full circle centered at (r,r)
   // then position the canvas left by -r so the vertical diameter hugs the viewport's left edge.
@@ -290,6 +345,7 @@ function SemiCircleCarousel({
   const baseAngles = items.map((_, i) => lerp(startEff, endEff, n === 1 ? 0 : i / (n - 1)));
   const deltaDeg = n > 1 ? Math.abs(endEff - startEff) / (n - 1) : span;
   const thresholdDeg = deltaDeg * 0.35; // smaller threshold for a softer, less aggressive magnet
+  const clearDeg = deltaDeg / 2; // fully clear when within half the original inter-item distance
   const contentRadius = R + contentRadiusOffset;
   // Optional horizontal centering for the first card at start
   const contentXOffset = useMotionValue(0);
@@ -311,10 +367,11 @@ function SemiCircleCarousel({
     return () => window.removeEventListener('resize', update);
   }, [centerContentAtStart, contentRadius, contentXOffset, R, rightNudgePct]);
 
-  // Idle detection + snap behavior toward nearest center if within half spacing
+  // Idle detection + snap behavior toward nearest center if within threshold
   React.useEffect(() => {
     if (isReduced) return;
     let timeoutId: number | null = null;
+    const prevVelRef = { current: 0 } as { current: number };
     const onChange = () => {
       // cancel scheduled snap and gently release any active snap offset
       if (timeoutId) {
@@ -324,14 +381,13 @@ function SemiCircleCarousel({
       if (snapMV.get() !== 0) {
         animate(snapMV, 0, { type: 'spring', stiffness: 260, damping: 34 });
       }
-      // schedule idle check
-      timeoutId = window.setTimeout(() => {
+      const runCheck = () => {
         const raw = angleDriver.get();
         const vel = Math.abs(angleDriver.getVelocity());
         const velThreshold = 20; // deg/sec; above this we consider user still scrolling
-        if (vel > velThreshold) {
-          return; // don't magnetize while user is still moving
-        }
+        // If dots are very close to center, allow magnet even while slowly scrolling down (only on downward scroll)
+        const syVel = scrollYProgress.getVelocity ? scrollYProgress.getVelocity() : 0;
+        const nearWhileScrolling = vel <= 60 && syVel > 0; // permit weak magnet at low velocities when scrolling down
         // compute nearest item to center (0°)
         let bestIdx = 0;
         let bestAbs = Infinity;
@@ -346,7 +402,7 @@ function SemiCircleCarousel({
         }
         const delta = n > 1 ? Math.abs(endEff - startEff) / (n - 1) : span;
         const threshold = delta * 0.35; // softer magnet range
-        if (bestAbs < threshold) {
+        if ((vel <= velThreshold && bestAbs < threshold) || (nearWhileScrolling && bestAbs < threshold * 0.5)) {
           const a = baseAngles[bestIdx] + raw;
           const norm = (((a % 360) + 540) % 360) - 180;
           const target = -norm;
@@ -354,12 +410,28 @@ function SemiCircleCarousel({
           if (Math.abs(norm) < 0.5) {
             snapMV.set(target);
           } else {
-            animate(snapMV, target, { type: 'spring', stiffness: 90, damping: 34 });
+            // Stronger magnet when extremely close, but still smooth
+            const strong = bestAbs < threshold * 0.25;
+            animate(snapMV, target, {
+              type: 'spring',
+              stiffness: strong ? 110 : 80,
+              damping: 36,
+            });
           }
         } else {
           animate(snapMV, 0, { type: 'spring', stiffness: 260, damping: 34 });
         }
-      }, 300);
+      };
+      // Instant check when stopping: if velocity just dropped below threshold, run immediately
+      const currentVel = Math.abs(angleDriver.getVelocity());
+      const prevVel = prevVelRef.current;
+      prevVelRef.current = currentVel;
+      if (prevVel > 20 && currentVel <= 20) {
+        runCheck();
+      } else {
+        // fallback idle check
+        timeoutId = window.setTimeout(runCheck, 150);
+      }
     };
 
     const unsub = angleDriver.on('change', onChange);
@@ -367,11 +439,11 @@ function SemiCircleCarousel({
       if (timeoutId) window.clearTimeout(timeoutId);
       unsub();
     };
-  }, [angleDriver, baseAngles, endEff, isReduced, n, snapMV, startEff, span]);
+  }, [angleDriver, baseAngles, endEff, isReduced, n, snapMV, startEff, span, scrollYProgress]);
 
   return (
     <section
-      className={['w-full bg-neutral-950 text-neutral-200', className ?? ''].join(' ')}
+      className={['w-full bg-white text-neutral-800', className ?? ''].join(' ')}
       style={{ minHeight: '100vh' }}
     >
       {/* Spacer before to make the pin effect clear */}
@@ -401,11 +473,17 @@ function SemiCircleCarousel({
                   aria-hidden
                 >
                   {/* Removed faint background circle to avoid dark overlap on the arc */}
-                  {/* Visible right semi accent */}
+                  {/* Visible right semi accent with light green gradient and low opacity */}
+                  <defs>
+                    <linearGradient id="arcGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#86efac" stopOpacity="0.25" />
+                      <stop offset="100%" stopColor="#22c55e" stopOpacity="0.25" />
+                    </linearGradient>
+                  </defs>
                   <path
                     d={describeArc(cx, cy, R - arcStrokeWidth / 2, startAngle, endAngle)}
                     fill="none"
-                    stroke={arcStroke}
+                    stroke="url(#arcGrad)"
                     strokeWidth={arcStrokeWidth}
                     strokeLinecap="round"
                   />
@@ -478,6 +556,7 @@ function SemiCircleCarousel({
                         textRotateOffset={textRotateOffset}
                         textClassName={textClassName}
                         thresholdDeg={thresholdDeg}
+                        clearDeg={clearDeg}
                       />
                     );
                   })}
@@ -502,6 +581,8 @@ function SemiCircleCarousel({
                         isReduced={!!isReduced}
                         textDirection={textDirection}
                         textRotateOffset={textRotateOffset}
+                        thresholdDeg={thresholdDeg}
+                        clearDeg={clearDeg}
                       />
                     );
                   })}
@@ -514,6 +595,7 @@ function SemiCircleCarousel({
                       const base = baseAngles[i];
                       return (
                         <ArcContent
+                          key={`content-${i}`}
                           contentRadius={contentRadius}
                           contentLeftScale={contentLeftScale}
                           cx={cx}
@@ -525,6 +607,7 @@ function SemiCircleCarousel({
                           textRotateOffset={textRotateOffset}
                           title={it.title}
                           description={it.description}
+                          clearDeg={clearDeg}
                         />
                       );
                     })}
@@ -551,7 +634,7 @@ function SemiCircleCarousel({
 
       {/* After-section to show release */}
       <div className="h-[120vh] flex items-center justify-center">
-        <p className="text-neutral-400">Normal scroll resumes…</p>
+        <p className="text-neutral-500">Normal scroll resumes…</p>
       </div>
     </section>
   );
@@ -570,6 +653,7 @@ function ArcContent({
   textRotateOffset,
   title,
   description,
+  clearDeg,
 }: {
   contentRadius: number;
   contentLeftScale: number;
@@ -582,6 +666,7 @@ function ArcContent({
   textRotateOffset: number;
   title: string;
   description: string;
+  clearDeg: number;
 }) {
   const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
   const xBase = useTransform(angleDeg, (a) => cx + contentRadius * Math.cos(deg2rad(a)));
@@ -592,13 +677,27 @@ function ArcContent({
   const rot: MotionValue<number> | number =
     textDirection === 'upright' ? textRotateOffset : textDirection === 'cw' ? rotCW : rotCCW;
 
-  // Emphasis for smooth fade-in/out near rightmost point
-  const strength = useTransform(angleDeg, (a) => {
-    const dist = Math.abs(((normalizeAngle(a) + 180) % 360) - 180);
-    return 1 - Math.min(dist / 90, 1);
+  // Directional fade/blur relative to center with faster fade when moving up
+  const signedDist = useTransform(angleDeg, (a) => {
+    const norm = (((normalizeAngle(a) + 180) % 360) - 180);
+    return norm;
   });
-  const opacity = useTransform(strength, (s) => lerp(0.2, 1, s));
-  const scale = useTransform(strength, (s) => lerp(0.95, 1, s));
+  const fadeT = useTransform(signedDist, (d) => {
+    const absd = Math.abs(d);
+    const clear = Math.max(0.001, clearDeg);
+    const over = Math.max(0, absd - clear);
+    const denom = d > 0 ? clear : clear * 2;
+    return Math.min(over / Math.max(0.001, denom), 1);
+  });
+  const opacity = useTransform(fadeT, (t) => 0.08 + Math.pow(1 - t, 0.9) * 0.92);
+  const scale = useTransform(fadeT, (t) => lerp(0.95, 1, 1 - t));
+  const blur = useTransform([fadeT, signedDist], (vals) => {
+    const t = vals[0] as number;
+    const d = vals[1] as number;
+    const maxBlur = d > 0 ? 8 : 5; // cards can tolerate a bit more blur
+    const px = maxBlur * Math.pow(t, 0.85);
+    return `blur(${px.toFixed(2)}px)`;
+  });
 
   return (
     <motion.li
@@ -611,6 +710,7 @@ function ArcContent({
         rotate: rot,
         opacity: isReduced ? 1 : opacity,
         scale: isReduced ? 1 : scale,
+        filter: isReduced ? 'none' : blur,
       }}
     >
       <div className="pointer-events-none select-none w-[600px]">
@@ -692,9 +792,9 @@ const demoItems: CarouselItem[] = [
 export default function Page() {
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-200">
-      <header className="sticky top-0 z-10 border-b border-neutral-900 bg-neutral-950/60 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b border-neutral-200 bg-white/70 backdrop-blur">
         <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
-          <span className="font-semibold tracking-wide text-neutral-300">SemiCircle Carousel • Framer Motion</span>
+          <span className="font-semibold tracking-wide text-neutral-700">SemiCircle Carousel • Framer Motion</span>
           <span className="text-xs text-neutral-500">Scroll to explore</span>
         </div>
       </header>
@@ -707,12 +807,14 @@ export default function Page() {
   contentLeftScale={1.06}
   rightNudgePct={0.30}
     itemsSpanPct={0.6}
+    ignoreReducedMotion
     // Show first item centered, others below it at load; then scroll brings items up
     startAngle={-90}
     endAngle={90}
     orbitDirection="ccw"
     initialAngleOffset={90}
     arcStrokeWidth={96}
+    arcStroke="#E5E7EB"
     centerContentAtStart
     sweepMultiplier={1.7}
   />
