@@ -353,16 +353,23 @@ function SemiCircleCarousel({
   const n = Math.max(items.length, 2);
   const mid = (sA + eA) / 2;
   const span = Math.abs(eA - sA);
-  const effHalfSpan = (span * Math.max(0.05, Math.min(1, itemsSpanPct))) / 2; // clamp to avoid degeneracy
+  // On mobile, spread items further apart by expanding their span along the arc
+  const itemsSpanPctForCalc = isMobile
+    ? Math.min(1, Math.max(itemsSpanPct, 0.95)) // ensure at least 95% of arc on mobile (up to full)
+    : itemsSpanPct;
+  const effHalfSpan = (span * Math.max(0.05, Math.min(1, itemsSpanPctForCalc))) / 2; // clamp to avoid degeneracy
   const startEff = mid - effHalfSpan;
   const endEff = mid + effHalfSpan;
   const baseAngles = items.map((_, i) => lerp(startEff, endEff, n === 1 ? 0 : i / (n - 1)));
 
+  // Compute an initial offset: on mobile, start with the FIRST item centered at the reference angle
+  const effectiveInitialOffset = isMobile ? (centerRefDeg - baseAngles[0]) : initialAngleOffset;
+
   // Pace mapping: slow from item 1 -> item 4 reaching center, then resume normal speed
   const lastIdx = n - 1;
   const vSwitchRaw = (orbitDirection === 'ccw')
-    ? (initialAngleOffset + baseAngles[lastIdx]) / Math.max(1e-6, totalSweep)
-    : (-initialAngleOffset - baseAngles[lastIdx]) / Math.max(1e-6, totalSweep);
+    ? (effectiveInitialOffset + baseAngles[lastIdx]) / Math.max(1e-6, totalSweep)
+    : (-effectiveInitialOffset - baseAngles[lastIdx]) / Math.max(1e-6, totalSweep);
   const vSwitch = Math.max(0, Math.min(1, vSwitchRaw));
   const uBreak = 0.72; // portion of scroll dedicated to very-slow phase
   const paceProgress = useTransform(scrollYProgress, (u) => {
@@ -378,8 +385,6 @@ function SemiCircleCarousel({
   });
   const angleOffsetBase = useTransform(paceProgress, [0, 1], [0, totalSweep]);
   const signed = useTransform(angleOffsetBase, (v) => (orbitDirection === 'ccw' ? -v : v));
-  // Mobile-only initial offset: 144° on mobile, prop value elsewhere
-  const effectiveInitialOffset = isMobile ? 144 : initialAngleOffset;
   const angleOffset = useTransform(signed, (v) => v + effectiveInitialOffset);
   // Provide a non-animating driver for reduced motion so children can always rely on a MotionValue
   const zeroMV = useMotionValue(effectiveInitialOffset);
@@ -458,8 +463,9 @@ function SemiCircleCarousel({
         const easeOut = 1 - Math.pow(1 - t, 2.2);
         const k = minScale + (1 - minScale) * easeOut; // k in [minScale,1]
         const rPrime = norm * k;
-        // reconstruct slowed absolute angle a' such that nearest + a' has distance rPrime
-        const aPrime = rPrime - nearest;
+        // Preserve the absolute angle by applying only the delta (rPrime - norm)
+        // a' = a + (rPrime - norm)
+        const aPrime = a + (rPrime - norm);
         return aPrime;
       });
 
