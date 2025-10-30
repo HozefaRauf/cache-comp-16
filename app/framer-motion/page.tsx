@@ -486,13 +486,13 @@ export default function Page() {
     textRotateOffset={90}
   contentRadiusOffset={860}
   contentLeftScale={1.06}
-  rightNudgePct={0.32}
+  rightNudgePct={0.30}
     // Show first item centered, others below it at load; then scroll brings items up
     startAngle={-90}
     endAngle={90}
     orbitDirection="ccw"
     initialAngleOffset={90}
-    arcStrokeWidth={48}
+    arcStrokeWidth={96}
     centerContentAtStart
     sweepMultiplier={1.36}
   />
