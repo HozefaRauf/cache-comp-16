@@ -196,6 +196,7 @@ function ArcPhaseLabel({
   thresholdDeg,
   clearDeg,
   centerRefDeg,
+  isMobile,
 }: {
   label: string;
   radius: number;
@@ -209,6 +210,7 @@ function ArcPhaseLabel({
   thresholdDeg: number;
   clearDeg: number;
   centerRefDeg: number;
+  isMobile: boolean;
 }) {
   const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
   const x = useTransform(angleDeg, (a) => cx + radius * Math.cos(deg2rad(a)));
@@ -257,8 +259,8 @@ function ArcPhaseLabel({
       style={{
         left: x,
         top: y,
-        translateX: '-100%', // anchor text to extend inward (left) from the arc
-        translateY: '-50%',
+        translateX: isMobile ? '-50%' : '-100%', // mobile centers; desktop extends inward
+        translateY: isMobile ? '-100%' : '-50%',
         rotate: rot,
         opacity: isReduced ? 1 : opacity,
         scale: isReduced ? 1 : scale,
@@ -416,7 +418,9 @@ function SemiCircleCarousel({
   const cx = R;
   const cy = R;
 
-  const totalPinHeight = Math.max(items.length, 2) * pinVHPerItem * Math.max(1, sweepMultiplier); // in vh
+  // Mobile: halve the physical scroll length by reducing per-item pin height
+  const effectivePinVHPerItem = isMobile ? pinVHPerItem * 0.35 : pinVHPerItem;
+  const totalPinHeight = Math.max(items.length, 2) * effectivePinVHPerItem * Math.max(1, sweepMultiplier); // in vh
 
   // Values derived from base angles
   const deltaDeg = n > 1 ? Math.abs(endEff - startEff) / (n - 1) : span;
@@ -761,7 +765,7 @@ function SemiCircleCarousel({
                     const base = baseAngles[i];
                     const phaseLabel = `PHASE ${i + 1}`;
                     // Place near the inner edge of the arc stroke for crisp alignment (slightly inside on mobile)
-                    const phaseRadius = isMobile ? (R - Math.round(arcStrokeW * 0.5) - 10) : (R - arcStrokeW - 20);
+                    const phaseRadius = isMobile ? (R - Math.round(arcStrokeW * 0.5) - 18) : (R - arcStrokeW - 20);
                     return (
                       <ArcPhaseLabel
                         key={`phase-${i}`}
@@ -777,6 +781,7 @@ function SemiCircleCarousel({
                         thresholdDeg={thresholdDeg}
                         clearDeg={clearDeg}
                         centerRefDeg={centerRefDeg}
+                        isMobile={isMobile}
                       />
                     );
                   })}
