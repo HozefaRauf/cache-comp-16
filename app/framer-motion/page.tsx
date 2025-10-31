@@ -357,7 +357,7 @@ function SemiCircleCarousel({
   const span = Math.abs(eA - sA);
   // On mobile, spread items further apart by expanding their span along the arc
   const itemsSpanPctForCalc = isMobile
-    ? Math.min(1, Math.max(itemsSpanPct, 0.95)) // ensure at least 95% of arc on mobile (up to full)
+    ? Math.min(1, Math.max(itemsSpanPct, 0.2)) // ensure at least 95% of arc on mobile (up to full)
     : itemsSpanPct;
   const effHalfSpan = (span * Math.max(0.05, Math.min(1, itemsSpanPctForCalc))) / 2; // clamp to avoid degeneracy
   const startEff = mid - effHalfSpan;
