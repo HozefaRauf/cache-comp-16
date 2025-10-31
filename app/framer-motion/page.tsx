@@ -373,19 +373,32 @@ function SemiCircleCarousel({
     ? (effectiveInitialOffset + baseAngles[lastIdx]) / Math.max(1e-6, totalSweep)
     : (-effectiveInitialOffset - baseAngles[lastIdx]) / Math.max(1e-6, totalSweep);
   const vSwitch = Math.max(0, Math.min(1, vSwitchRaw));
-  const uBreak = 0.72; // portion of scroll dedicated to very-slow phase
-  const paceProgress = useTransform(scrollYProgress, (u) => {
-    if (u <= uBreak) {
-      const t = u / uBreak; // 0..1
-      const e = easeInOutCubic(t);
-      return vSwitch * e; // advance only up to the 4th item centering
-    } else {
-      const t = (u - uBreak) / Math.max(1e-6, 1 - uBreak); // 0..1
-      const e = easeInOutCubic(t);
-      return vSwitch + (1 - vSwitch) * e; // normal pace to the end
-    }
+  // Mobile: Use the entire pinned scroll to reach exactly when the last item hits center (no dead zone).
+  const requiredSweep = totalSweep * vSwitch; // degrees needed to bring last item to center (mobile pacing)
+  // Mobile: use entire pin to exactly reach the last item center (no tail/dead zone)
+  const paceProgressMobile = useTransform(scrollYProgress, (u) => {
+    const e = easeInOutCubic(Math.max(0, Math.min(1, u)));
+    return vSwitch * e; // 0..vSwitch
   });
-  const angleOffsetBase = useTransform(paceProgress, [0, 1], [0, totalSweep]);
+  // Map 0..vSwitch -> 0..requiredSweep (mobile)
+  const angleOffsetBaseMobile = useTransform(paceProgressMobile, (p) => {
+    const r = Math.max(0, Math.min(vSwitch, p));
+    return (r / Math.max(1e-6, vSwitch)) * requiredSweep;
+  });
+  // Desktop: keep previous full-sweep pacing across the entire pin height
+  // Desktop: add a small inert tail at the end of the pin for a gentle fade-out
+  const tailPctDesktop = 0.2; // 6% of pin height
+  const paceProgressDesktop = useTransform(scrollYProgress, (u) => {
+    const uu = Math.max(0, Math.min(1, u));
+    const cutoff = Math.max(0.01, 1 - tailPctDesktop);
+    if (uu < cutoff) {
+      const t = uu / cutoff; // remap 0..cutoff -> 0..1
+      return easeInOutCubic(t);
+    }
+    return 1; // hold completed during tail range
+  });
+  const angleOffsetBaseDesktop = useTransform(paceProgressDesktop, (p) => p * totalSweep);
+  const angleOffsetBase = isMobile ? angleOffsetBaseMobile : angleOffsetBaseDesktop;
   const signed = useTransform(angleOffsetBase, (v) => (orbitDirection === 'ccw' ? -v : v));
   const angleOffset = useTransform(signed, (v) => v + effectiveInitialOffset);
   // Provide a non-animating driver for reduced motion so children can always rely on a MotionValue
@@ -394,21 +407,35 @@ function SemiCircleCarousel({
   // then blend to the normal spring for a snappier feel afterwards.
   const angleSmoothedFast = useSpring(angleOffset, { stiffness: 90, damping: 30, mass: 1.05 });
   const angleSmoothedSlow = useSpring(angleOffset, { stiffness: 55, damping: 32, mass: 1.08 });
-  const smoothMix = useTransform(scrollYProgress, (u) => {
-    const a = Math.max(0, uBreak - 0.08);
-    const b = Math.min(1, uBreak + 0.08);
-    if (u <= a) return 0;
-    if (u >= b) return 1;
-    const t = (u - a) / Math.max(1e-6, b - a);
-    return t * t * (3 - 2 * t); // smoothstep
+  // Spring blending: mobile keeps gentler spring; desktop blends to faster spring after a breakpoint
+  const smoothMixMobile = useTransform(scrollYProgress, () => 0);
+  const smoothMixDesktop = useTransform(scrollYProgress, (u) => {
+    // Use vSwitch as a rough breakpoint; blend to fast spring towards the end of the pin
+    const ub = Math.max(0.05, Math.min(0.95, vSwitch));
+    const t = (Math.max(0, Math.min(1, u)) - ub) / Math.max(1e-6, 1 - ub);
+    return Math.max(0, Math.min(1, t));
   });
+  const smoothMix = isMobile ? smoothMixMobile : smoothMixDesktop;
   const angleSmoothedBlend = useTransform([angleSmoothedFast, angleSmoothedSlow, smoothMix], (vals) => {
     const fast = vals[0] as number;
     const slow = vals[1] as number;
     const m = vals[2] as number;
     return slow * (1 - m) + fast * m;
   });
-  const angleDriver = isReduced ? zeroMV : angleSmoothedBlend;
+  // Desktop: ensure no under-travel at the very end; smoothly switch to raw target angle in the last ~1.5% of pin
+  const angleDriverEndSafe = useTransform([angleSmoothedBlend, angleOffset, scrollYProgress], (vals) => {
+    const blended = vals[0] as number;
+    const raw = vals[1] as number;
+    const u = Math.max(0, Math.min(1, vals[2] as number));
+    if (isMobile) return blended; // mobile keeps gentler spring all the way (with end-tail handled above)
+    const start = 0.985; // begin crossfade at 98.5%
+    const end = 0.9995; // fully raw by 99.95%
+    const t = Math.max(0, Math.min(1, (u - start) / Math.max(1e-6, end - start)));
+    // ease the mix for a seamless transition
+    const mix = t * t * (3 - 2 * t);
+    return raw * mix + blended * (1 - mix);
+  });
+  const angleDriver = isReduced ? zeroMV : angleDriverEndSafe;
   // Snap assist: when user stops scrolling and a card's dot is within half-spacing, nudge it to center
   const snapMV = useMotionValue(0);
 
@@ -419,8 +446,8 @@ function SemiCircleCarousel({
   const cy = R;
 
   // Mobile: halve the physical scroll length by reducing per-item pin height
-  const effectivePinVHPerItem = isMobile ? pinVHPerItem * 0.35 : pinVHPerItem;
-  const totalPinHeight = Math.max(items.length, 2) * effectivePinVHPerItem * Math.max(1, sweepMultiplier); // in vh
+  const effectivePinVHPerItem = isMobile ? pinVHPerItem * 2.5 : pinVHPerItem;
+  const totalPinHeight = Math.max(items.length, 1) * effectivePinVHPerItem * Math.max(1, sweepMultiplier); // in vh
 
   // Values derived from base angles
   const deltaDeg = n > 1 ? Math.abs(endEff - startEff) / (n - 1) : span;
@@ -1013,8 +1040,8 @@ export default function Page() {
   contentRadiusOffset={860}
   contentLeftScale={1.06}
   rightNudgePct={0.30}
-    itemsSpanPct={0.6}
-    pinVHPerItem={92}
+    itemsSpanPct={1}
+    pinVHPerItem={100}
     ignoreReducedMotion
     // Show first item centered, others below it at load; then scroll brings items up
     startAngle={-90}
@@ -1024,7 +1051,7 @@ export default function Page() {
     arcStrokeWidth={96}
     arcStroke="#E5E7EB"
     centerContentAtStart
-    sweepMultiplier={1.7}
+    sweepMultiplier={1}
   />
     </main>
   );
