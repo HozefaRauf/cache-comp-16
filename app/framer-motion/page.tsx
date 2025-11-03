@@ -197,6 +197,7 @@ function ArcPhaseLabel({
   clearDeg,
   centerRefDeg,
   isMobile,
+  isTablet,
 }: {
   label: string;
   radius: number;
@@ -211,6 +212,7 @@ function ArcPhaseLabel({
   clearDeg: number;
   centerRefDeg: number;
   isMobile: boolean;
+  isTablet: boolean;
 }) {
   const angleDeg = useTransform(angleOffset, (off) => baseAngle + off);
   const x = useTransform(angleDeg, (a) => cx + radius * Math.cos(deg2rad(a)));
@@ -259,8 +261,8 @@ function ArcPhaseLabel({
       style={{
         left: x,
         top: y,
-        translateX: isMobile ? '-50%' : '-100%', // mobile centers; desktop extends inward
-        translateY: isMobile ? '-100%' : '-50%',
+        translateX: isMobile ? '-50%' : isTablet ? '-50%' : '-100%', // mobile centers; desktop extends inward
+        translateY: isMobile ? '-100%' : isTablet ? '-275%' : '-50%',
         rotate: rot,
         opacity: isReduced ? 1 : opacity,
         scale: isReduced ? 1 : scale,
@@ -327,10 +329,13 @@ function SemiCircleCarousel({
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  const isMobile = (vw ?? 0) < 768;
-  const R = vw ? (isMobile ? Math.round((vw) / 2) : Math.round(vw * 0.36)) : radius; // mobile: span full width; else 36vw
-  // Responsive arc stroke: slimmer on small screens for a cleaner mobile look
-  const arcStrokeW = isMobile ? Math.min(64, Math.max(36, Math.round(R * 0.14))) : arcStrokeWidth;
+  const width = vw ?? 0;
+  const isMobile = width < 768;
+  const isTablet = width >= 768 && width <= 1024;
+  const isHandheld = isMobile || isTablet; // treat tablets like mobile for layout/behavior
+  const R = vw ? (isHandheld ? Math.round(vw / 2) : Math.round(vw * 0.36)) : radius; // handheld: span full width; else 36vw
+  // Responsive arc stroke: slimmer on small screens for a cleaner handheld look
+  const arcStrokeW = isHandheld ? Math.min(64, Math.max(36, Math.round(R * 0.14))) : arcStrokeWidth;
 
   // Scroll progress that starts only once the pinned wrapper reaches the top of the viewport
   // This ensures we "start changing" items only when fully scrolled to the component.
@@ -340,12 +345,12 @@ function SemiCircleCarousel({
   });
 
   // Select arc orientation per viewport
-  // Mobile: draw bottom semicircle (0°→180°) positioned at top so arc faces down
-  const sA = isMobile ? 0 : startAngle;
-  const eA = isMobile ? 180 : endAngle;
-  const centerRefDeg = isMobile ? 90 : 0; // mobile center at bottom of arc (90°); desktop at right (0°)
-  // Mobile-only rotation offset for text: force 0 on mobile
-  const effectiveTextRotateOffset = isMobile ? 0 : textRotateOffset;
+  // Handheld: draw bottom semicircle (0°→180°) positioned at top so arc faces down
+  const sA = isHandheld ? 0 : startAngle;
+  const eA = isHandheld ? 180 : endAngle;
+  const centerRefDeg = isHandheld ? 90 : 0; // handheld center at bottom of arc (90°); desktop at right (0°)
+  // Handheld-only rotation offset for text: force 0 on handheld
+  const effectiveTextRotateOffset = isHandheld ? 0 : textRotateOffset;
 
   // One sweep across the visible semicircle scaled by sweepMultiplier
   const sweep = Math.abs(eA - sA); // base 180
@@ -355,17 +360,19 @@ function SemiCircleCarousel({
   const n = Math.max(items.length, 2);
   const mid = (sA + eA) / 2;
   const span = Math.abs(eA - sA);
-  // On mobile, spread items further apart by expanding their span along the arc
-  const itemsSpanPctForCalc = isMobile
+  // On handheld, spread items further apart by expanding their span along the arc
+  const itemsSpanPctForCalc = isHandheld
     ? Math.min(1, Math.max(itemsSpanPct, 0.2)) // ensure at least 95% of arc on mobile (up to full)
     : itemsSpanPct;
-  const effHalfSpan = (span * Math.max(0.05, Math.min(1, itemsSpanPctForCalc))) / 2; // clamp to avoid degeneracy
+  // On tablet, slightly widen the item distribution beyond the visible arc to increase gaps
+  const tabletSpread = isTablet ? 1.5 : 1; // ~12% wider spacing only for tablets
+  const effHalfSpan = (span * Math.max(0.05, Math.min(1, itemsSpanPctForCalc)) * tabletSpread) / 2; // clamp to avoid degeneracy
   const startEff = mid - effHalfSpan;
   const endEff = mid + effHalfSpan;
   const baseAngles = items.map((_, i) => lerp(startEff, endEff, n === 1 ? 0 : i / (n - 1)));
 
-  // Compute an initial offset: on mobile, start with the FIRST item centered at the reference angle
-  const effectiveInitialOffset = isMobile ? (centerRefDeg - baseAngles[0]) : initialAngleOffset;
+  // Compute an initial offset: on handheld, start with the FIRST item centered at the reference angle
+  const effectiveInitialOffset = isHandheld ? (centerRefDeg - baseAngles[0]) : initialAngleOffset;
 
   // Pace mapping: slow from item 1 -> item 4 reaching center, then resume normal speed
   const lastIdx = n - 1;
@@ -373,18 +380,18 @@ function SemiCircleCarousel({
     ? (effectiveInitialOffset + baseAngles[lastIdx]) / Math.max(1e-6, totalSweep)
     : (-effectiveInitialOffset - baseAngles[lastIdx]) / Math.max(1e-6, totalSweep);
   const vSwitch = Math.max(0, Math.min(1, vSwitchRaw));
-  // Mobile: Use the entire pinned scroll to reach exactly when the last item hits center (no dead zone).
-  const requiredSweep = totalSweep * vSwitch; // degrees needed to bring last item to center (mobile pacing)
-  // Mobile: use entire pin to exactly reach the last item center (no tail/dead zone)
+  // Handheld: compute the exact sweep needed so the last item reaches center at the end
+  const requiredSweepHandheld = (() => {
+    const last = baseAngles[lastIdx];
+    if (orbitDirection === 'ccw') return Math.max(0, last + effectiveInitialOffset - centerRefDeg);
+    return Math.max(0, centerRefDeg - last - effectiveInitialOffset);
+  })();
+  // Handheld: use entire pin to exactly reach the last item center (no tail/dead zone)
   const paceProgressMobile = useTransform(scrollYProgress, (u) => {
-    const e = easeInOutCubic(Math.max(0, Math.min(1, u)));
-    return vSwitch * e; // 0..vSwitch
+    return easeInOutCubic(Math.max(0, Math.min(1, u))); // 0..1
   });
-  // Map 0..vSwitch -> 0..requiredSweep (mobile)
-  const angleOffsetBaseMobile = useTransform(paceProgressMobile, (p) => {
-    const r = Math.max(0, Math.min(vSwitch, p));
-    return (r / Math.max(1e-6, vSwitch)) * requiredSweep;
-  });
+  // Map 0..1 -> 0..requiredSweepHandheld (handheld)
+  const angleOffsetBaseMobile = useTransform(paceProgressMobile, (p) => p * requiredSweepHandheld);
   // Desktop: keep previous full-sweep pacing across the entire pin height
   // Desktop: add a small inert tail at the end of the pin for a gentle fade-out
   const tailPctDesktop = 0.2; // 6% of pin height
@@ -398,7 +405,7 @@ function SemiCircleCarousel({
     return 1; // hold completed during tail range
   });
   const angleOffsetBaseDesktop = useTransform(paceProgressDesktop, (p) => p * totalSweep);
-  const angleOffsetBase = isMobile ? angleOffsetBaseMobile : angleOffsetBaseDesktop;
+  const angleOffsetBase = isHandheld ? angleOffsetBaseMobile : angleOffsetBaseDesktop;
   const signed = useTransform(angleOffsetBase, (v) => (orbitDirection === 'ccw' ? -v : v));
   const angleOffset = useTransform(signed, (v) => v + effectiveInitialOffset);
   // Provide a non-animating driver for reduced motion so children can always rely on a MotionValue
@@ -415,7 +422,7 @@ function SemiCircleCarousel({
     const t = (Math.max(0, Math.min(1, u)) - ub) / Math.max(1e-6, 1 - ub);
     return Math.max(0, Math.min(1, t));
   });
-  const smoothMix = isMobile ? smoothMixMobile : smoothMixDesktop;
+  const smoothMix = isHandheld ? smoothMixMobile : smoothMixDesktop;
   const angleSmoothedBlend = useTransform([angleSmoothedFast, angleSmoothedSlow, smoothMix], (vals) => {
     const fast = vals[0] as number;
     const slow = vals[1] as number;
@@ -427,7 +434,7 @@ function SemiCircleCarousel({
     const blended = vals[0] as number;
     const raw = vals[1] as number;
     const u = Math.max(0, Math.min(1, vals[2] as number));
-    if (isMobile) return blended; // mobile keeps gentler spring all the way (with end-tail handled above)
+  if (isHandheld) return blended; // handheld keeps gentler spring all the way (with end-tail handled above)
     const start = 0.985; // begin crossfade at 98.5%
     const end = 0.9995; // fully raw by 99.95%
     const t = Math.max(0, Math.min(1, (u - start) / Math.max(1e-6, end - start)));
@@ -445,15 +452,15 @@ function SemiCircleCarousel({
   const cx = R;
   const cy = R;
 
-  // Mobile: halve the physical scroll length by reducing per-item pin height
-  const effectivePinVHPerItem = isMobile ? pinVHPerItem * 2.5 : pinVHPerItem;
+  // Handheld: halve the physical scroll length by reducing per-item pin height
+  const effectivePinVHPerItem = isHandheld ? pinVHPerItem * 2.5 : pinVHPerItem;
   const totalPinHeight = Math.max(items.length, 1) * effectivePinVHPerItem * Math.max(1, sweepMultiplier); // in vh
 
   // Values derived from base angles
   const deltaDeg = n > 1 ? Math.abs(endEff - startEff) / (n - 1) : span;
   const thresholdDeg = deltaDeg * 0.35; // smaller threshold for a softer, less aggressive magnet
   const clearDeg = deltaDeg / 2; // fully clear when within half the original inter-item distance
-  const contentRadius = isMobile
+  const contentRadius = isHandheld
     ? (() => {
         // Slightly more separation on mobile (bumped again)
         if (!vh) return R + Math.max(240, Math.round(R * 1.05));
@@ -507,7 +514,7 @@ function SemiCircleCarousel({
   const contentXOffset = useMotionValue(0);
   React.useEffect(() => {
     const update = () => {
-      if (!centerContentAtStart || isMobile) {
+      if (!centerContentAtStart || isHandheld) {
         contentXOffset.set(0);
         return;
       }
@@ -675,9 +682,9 @@ function SemiCircleCarousel({
             <div className="absolute inset-0">
               {/* Canvas for arc and labels positioned so the vertical diameter hugs the left edge */}
               <div
-                className={isMobile ? 'absolute' : 'absolute top-1/2 -translate-y-1/2'}
+                className={isHandheld ? 'absolute' : 'absolute top-1/2 -translate-y-1/2'}
                 style={
-                  isMobile
+                  isHandheld
                     ? { width: canvasSize, height: canvasSize, left: '50%', top: -R, transform: 'translate(-50%, 0)' }
                     : { width: canvasSize, height: canvasSize, left: -R }
                 }
@@ -792,7 +799,7 @@ function SemiCircleCarousel({
                     const base = baseAngles[i];
                     const phaseLabel = `PHASE ${i + 1}`;
                     // Place near the inner edge of the arc stroke for crisp alignment (slightly inside on mobile)
-                    const phaseRadius = isMobile ? (R - Math.round(arcStrokeW * 0.5) - 18) : (R - arcStrokeW - 20);
+                    const phaseRadius = isHandheld ? (R - Math.round(arcStrokeW * 0.5) - 18) : (R - arcStrokeW - 20);
                     return (
                       <ArcPhaseLabel
                         key={`phase-${i}`}
@@ -808,7 +815,8 @@ function SemiCircleCarousel({
                         thresholdDeg={thresholdDeg}
                         clearDeg={clearDeg}
                         centerRefDeg={centerRefDeg}
-                        isMobile={isMobile}
+                        isMobile={isHandheld}
+                        isTablet={isTablet}
                       />
                     );
                   })}
@@ -819,23 +827,26 @@ function SemiCircleCarousel({
                   <ul className="absolute inset-0" aria-hidden="true">
                     {items.map((it, i) => {
                       const base = baseAngles[i];
+                      // Tablet: nudge items slightly downward to increase top spacing relative to phase labels
+                      const tabletItemYOffsetPx = isTablet ? Math.round(R * 0.2) : 0;
                       return (
                         <ArcContent
                           key={`content-${i}`}
                           contentRadius={contentRadius}
-                          contentLeftScale={isMobile ? 1 : contentLeftScale}
+                          contentLeftScale={isHandheld ? 1 : contentLeftScale}
                           cx={cx}
                           cy={cy}
                           baseAngle={base}
                           angleOffset={angleDriverWithSnap}
                           isReduced={!!isReduced}
-                          textDirection={isMobile ? 'upright' : textDirection}
+                          textDirection={isHandheld ? 'upright' : textDirection}
                           textRotateOffset={effectiveTextRotateOffset}
                           title={it.title}
                           description={it.description}
                           clearDeg={clearDeg}
                           centerRefDeg={centerRefDeg}
                           extraAngleOffsetDeg={0}
+                          tabletYOffsetPx={tabletItemYOffsetPx}
                         />
                       );
                     })}
@@ -884,6 +895,7 @@ function ArcContent({
   clearDeg,
   centerRefDeg,
   extraAngleOffsetDeg = 0,
+  tabletYOffsetPx = 0,
 }: {
   contentRadius: number;
   contentLeftScale: number;
@@ -899,12 +911,13 @@ function ArcContent({
   clearDeg: number;
   centerRefDeg: number;
   extraAngleOffsetDeg?: number;
+  tabletYOffsetPx?: number;
 }) {
   const dotAngleDeg = useTransform(angleOffset, (off) => baseAngle + off);
   const angleDeg = useTransform(angleOffset, (off) => baseAngle + off + extraAngleOffsetDeg);
   const xBase = useTransform(angleDeg, (a) => cx + contentRadius * Math.cos(deg2rad(a)));
   const x = useTransform(xBase, (v) => v * contentLeftScale);
-  const y = useTransform(angleDeg, (a) => cy + contentRadius * Math.sin(deg2rad(a)));
+  const y = useTransform(angleDeg, (a) => cy + contentRadius * Math.sin(deg2rad(a)) + tabletYOffsetPx);
   const rotCW = useTransform(angleDeg, (a) => a + 90 + textRotateOffset);
   const rotCCW = useTransform(angleDeg, (a) => a - 90 + textRotateOffset);
   const rot: MotionValue<number> | number =
