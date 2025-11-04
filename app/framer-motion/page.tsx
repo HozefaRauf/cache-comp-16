@@ -307,15 +307,22 @@ function SemiCircleCarousel({
   const prefersReduced = useReducedMotion();
   const isReduced = ignoreReducedMotion ? false : prefersReduced;
 
-  // Keep a component-scoped ref to control a brief dwell/pause at center
-  const dwellRef = React.useRef<{ active: boolean; idx: number | null; timer: number | null }>({
+  // Capture lock near center: when close enough and slow, lock the nearest item to the fixed point
+  const dwellRef = React.useRef<{ active: boolean; idx: number | null }>({
     active: false,
     idx: null,
-    timer: null,
   });
 
   const pinRef = React.useRef<HTMLDivElement | null>(null);
   const stickyRef = React.useRef<HTMLDivElement | null>(null);
+  // Track any ongoing snap animation so we can cancel it immediately on scroll
+  const snapAnimRef = React.useRef<ReturnType<typeof animate> | null>(null);
+  const stopSnapAnim = React.useCallback(() => {
+    if (snapAnimRef.current) {
+      try { snapAnimRef.current.stop(); } catch {}
+      snapAnimRef.current = null;
+    }
+  }, []);
 
   // Dynamically size the visible semicircle to 36% of the viewport width
   const [vw, setVw] = React.useState<number | null>(null);
@@ -371,8 +378,11 @@ function SemiCircleCarousel({
   const endEff = mid + effHalfSpan;
   const baseAngles = items.map((_, i) => lerp(startEff, endEff, n === 1 ? 0 : i / (n - 1)));
 
-  // Compute an initial offset: on handheld, start with the FIRST item centered at the reference angle
-  const effectiveInitialOffset = isHandheld ? (centerRefDeg - baseAngles[0]) : initialAngleOffset;
+  // Compute an initial offset: start with the FIRST item centered at the reference angle
+  // Handheld always centers item 1; on desktop, also center when centerContentAtStart is enabled
+  const effectiveInitialOffset = (isHandheld || centerContentAtStart)
+    ? (centerRefDeg - baseAngles[0])
+    : initialAngleOffset;
 
   // Pace mapping: slow from item 1 -> item 4 reaching center, then resume normal speed
   const lastIdx = n - 1;
@@ -412,21 +422,30 @@ function SemiCircleCarousel({
   const angleOffsetBaseDesktop = useTransform(paceProgressDesktop, (p) => p * requiredSweepDesktop);
   const angleOffsetBase = isHandheld ? angleOffsetBaseMobile : angleOffsetBaseDesktop;
   const signed = useTransform(angleOffsetBase, (v) => (orbitDirection === 'ccw' ? -v : v));
-  const angleOffset = useTransform(signed, (v) => v + effectiveInitialOffset);
+  // Persistent commit offset so snapped positions become the new baseline
+  const committedAngleMV = useMotionValue(0);
+  const angleOffset = useTransform([signed, committedAngleMV], (vals) => {
+    const v = vals[0] as number;
+    const c = vals[1] as number;
+    return v + effectiveInitialOffset + c;
+  });
+  // Snap assist offset that we will now feed into the springs to keep continuity when committing
+  const snapMV = useMotionValue(0);
   // Provide a non-animating driver for reduced motion so children can always rely on a MotionValue
   const zeroMV = useMotionValue(effectiveInitialOffset);
+  // Feed snap into spring input so committing snap doesn't cause a visual jump
+  const angleOffsetWithSnap = useTransform([angleOffset, snapMV], (vals) => (vals[0] as number) + (vals[1] as number));
   // Smooth the scroll-derived angle. Use extra-smooth spring before the 4th card passes center,
   // then blend to the normal spring for a snappier feel afterwards.
   // Moderately tight springs for quicker stop without jitter
-  const angleSmoothedFast = useSpring(angleOffset, { stiffness: 150, damping: 15, mass: 1.1 });
-  const angleSmoothedSlow = useSpring(angleOffset, { stiffness: 90, damping: 40, mass: 1.04 });
+  const angleSmoothedFast = useSpring(angleOffsetWithSnap, { stiffness: 130, damping: 36, mass: 1.02 });
+  const angleSmoothedSlow = useSpring(angleOffsetWithSnap, { stiffness: 90, damping: 40, mass: 1.04 });
   // Spring blending: mobile keeps gentler spring; desktop blends to faster spring after a breakpoint
   const smoothMixMobile = useTransform(scrollYProgress, () => 0);
   const smoothMixDesktop = useTransform(scrollYProgress, (u) => {
-    // Use vSwitch as a rough breakpoint; blend to fast spring towards the end of the pin
-    const ub = Math.max(0.05, Math.min(0.95, vSwitch));
-    const t = (Math.max(0, Math.min(1, u)) - ub) / Math.max(1e-6, 1 - ub);
-    return Math.max(0, Math.min(1, t));
+    // Faster through the middle, gentle at the start and end to avoid jitters near center crossings
+    const uu = Math.max(0, Math.min(1, u));
+    return Math.sin(Math.PI * uu) * 0.9; // 0 at edges, ~0.9 at middle
   });
   const smoothMix = isHandheld ? smoothMixMobile : smoothMixDesktop;
   const angleSmoothedBlend = useTransform([angleSmoothedFast, angleSmoothedSlow, smoothMix], (vals) => {
@@ -436,7 +455,7 @@ function SemiCircleCarousel({
     return slow * (1 - m) + fast * m;
   });
   // Desktop: ensure no under-travel at the very end; smoothly switch to raw target angle in the last ~1.5% of pin
-  const angleDriverEndSafe = useTransform([angleSmoothedBlend, angleOffset, scrollYProgress], (vals) => {
+  const angleDriverEndSafe = useTransform([angleSmoothedBlend, angleOffsetWithSnap, scrollYProgress], (vals) => {
     const blended = vals[0] as number;
     const raw = vals[1] as number;
     const u = Math.max(0, Math.min(1, vals[2] as number));
@@ -451,8 +470,18 @@ function SemiCircleCarousel({
     return raw * mix + blended * (1 - mix);
   });
   const angleDriver = isReduced ? zeroMV : angleDriverEndSafe;
-  // Snap assist: when user stops scrolling and a card's dot is within half-spacing, nudge it to center
-  const snapMV = useMotionValue(0);
+  // Commit snap offset into baseline so there is no jump when resuming scroll
+  const commitSnapToBase = React.useCallback(() => {
+    const v = snapMV.get();
+    if (Math.abs(v) > 0.2) {
+      stopSnapAnim();
+      committedAngleMV.set(committedAngleMV.get() + v);
+      snapMV.set(0);
+    } else if (v !== 0) {
+      // tiny residuals: just zero without committing to avoid baseline drift
+      snapMV.set(0);
+    }
+  }, [snapMV, committedAngleMV, stopSnapAnim]);
 
   // local canvas coordinates: we draw a full circle centered at (r,r)
   // then position the canvas left by -r so the vertical diameter hugs the viewport's left edge.
@@ -482,42 +511,27 @@ function SemiCircleCarousel({
     : R + contentRadiusOffset;
 
   // Dynamic slowdown near the nearest center: compress relative angle locally
-  const slowRadius = clearDeg * 0.7; // smaller slow zone to avoid lingering
-  const minScale = 0.75; // less slowdown at exact center so it settles quicker
+  const slowRadius = clearDeg * 0.7; // slow zone radius around each center event
+  const minScale = 0.78; // slightly gentler slowdown to reduce perceptible tug
   const angleSlowed = isReduced
     ? angleDriver
     : useTransform(angleDriver, (a) => {
-        // find nearest center (baseAngle) to current scroll angle
-        let nearest = baseAngles[0];
-        let bestAbs = Infinity;
-        for (let i = 0; i < baseAngles.length; i++) {
-          const r = baseAngles[i] + a;
-          const d = r - centerRefDeg;
-          const norm = (((d % 360) + 540) % 360) - 180; // signed distance to centerRef
-          const abs = Math.abs(norm);
-          if (abs < bestAbs) {
-            bestAbs = abs;
-            nearest = baseAngles[i];
-          }
-        }
-        // signed distance to center for nearest item
-        const r = nearest + a;
-        const d = r - centerRefDeg;
-        const norm = (((d % 360) + 540) % 360) - 180;
-        const t = Math.min(Math.abs(norm) / Math.max(0.001, slowRadius), 1);
-        // ease so slowdown concentrates very near center
+        // Continuous, periodic slowdown around each center crossing to avoid discrete nearest-item switches
+        if (n <= 1 || deltaDeg <= 1e-6) return a;
+        const spacing = deltaDeg;
+        const phase0 = baseAngles[0] - centerRefDeg; // align period so item 0 centers at phase 0
+        // signed distance to nearest center event in range [-spacing/2, spacing/2]
+        let rel = a + phase0;
+        rel = ((rel % spacing) + spacing) % spacing; // 0..spacing
+        if (rel > spacing / 2) rel -= spacing; // -spacing/2..spacing/2
+        const t = Math.min(Math.abs(rel) / Math.max(0.001, slowRadius), 1);
         const easeOut = 1 - Math.pow(1 - t, 2.2);
-        const k = minScale + (1 - minScale) * easeOut; // k in [minScale,1]
-        const rPrime = norm * k;
-        // Preserve the absolute angle by applying only the delta (rPrime - norm)
-        // a' = a + (rPrime - norm)
-        const aPrime = a + (rPrime - norm);
-        return aPrime;
+        const k = minScale + (1 - minScale) * easeOut; // [minScale,1]
+        return a + rel * (k - 1);
       });
 
-  // Combine slowed angle with snap offset for the final driver used by UI
-  const angleWithSnap = useTransform([angleSlowed, snapMV], (vals) => (vals[0] as number) + (vals[1] as number));
-  const angleDriverWithSnap = isReduced ? angleSlowed : angleWithSnap;
+  // Final driver now already includes snap within the springs; no post-spring addition
+  const angleDriverWithSnap = angleSlowed;
   // Optional horizontal centering for the first card at start
   const contentXOffset = useMotionValue(0);
   React.useEffect(() => {
@@ -538,28 +552,39 @@ function SemiCircleCarousel({
     return () => window.removeEventListener('resize', update);
   }, [centerContentAtStart, contentRadius, contentXOffset, R, rightNudgePct]);
 
-  // Idle detection + snap behavior toward nearest center if within threshold
+  // Snap behavior: apply magnetic snap only when scroll animation stops or is almost stopped
   React.useEffect(() => {
     if (isReduced) return;
     let timeoutId: number | null = null;
     const prevVelRef = { current: 0 } as { current: number };
+    const lastMoveAtRef = { current: Date.now() } as { current: number };
     const onChange = () => {
       // cancel scheduled snap and gently release any active snap offset
       if (timeoutId) {
         window.clearTimeout(timeoutId);
         timeoutId = null;
       }
-      if (snapMV.get() !== 0) {
-        animate(snapMV, 0, { type: 'spring', stiffness: 260, damping: 34 });
-      }
+      const velIdle = 18; // deg/sec: consider 'almost stopped' below this
+      const syIdle = 0.25; // scroll progress velocity threshold
+      const idleHoldMs = 160; // must remain idle this long before snapping
+      const uMinSnapGate = 0.02; // do not snap at the very start of the pin
       const runCheck = () => {
-  const raw = angleSlowed.get();
-  const vel = Math.abs(angleSlowed.getVelocity());
-  const velThreshold = 20; // deg/sec; above this we consider user still scrolling
-  // If dots are very close to center, allow magnet even while slowly scrolling down (only on downward scroll)
-  const syVel = scrollYProgress.getVelocity ? scrollYProgress.getVelocity() : 0;
-  const nearWhileScrolling = vel <= 50 && syVel > 0; // permit weak magnet at very low velocities when scrolling down
-        // compute nearest item to center (0°)
+        const raw = angleSlowed.get();
+        const vel = Math.abs(angleSlowed.getVelocity());
+        const syVelNow = scrollYProgress.getVelocity ? scrollYProgress.getVelocity() : 0;
+        const uNow = scrollYProgress.get ? (scrollYProgress.get() as number) : 0;
+        const nowTs = Date.now();
+        if (nowTs - lastMoveAtRef.current < idleHoldMs || uNow < uMinSnapGate) {
+          // not stably idle long enough or too early in scroll; don't snap
+          return;
+        }
+        if (vel > velIdle || Math.abs(syVelNow) > syIdle) {
+          // release if moving again
+          if (dwellRef.current.active) dwellRef.current = { active: false, idx: null };
+          commitSnapToBase();
+          return;
+        }
+        // idle-ish: snap to nearest if within threshold
         let bestIdx = 0;
         let bestAbs = Infinity;
         for (let i = 0; i < baseAngles.length; i++) {
@@ -573,103 +598,55 @@ function SemiCircleCarousel({
           }
         }
         const delta = n > 1 ? Math.abs(endEff - startEff) / (n - 1) : span;
-  const threshold = delta * 0.35; // magnet capture range
-  const dwellEnter = threshold * 0.5; // enter dwell when extremely close to center
-  const dwellMs = 420; // a touch longer pause for readability
-  const dwellVelMax = 180; // allow dwell to start even with moderate scroll input
-  const velCancel = 220; // only much faster motion cancels dwell
-
-        // If dwelling and user speeds up or moves away, cancel dwell
-        if (dwellRef.current.active) {
-          const isFast = vel > velCancel || Math.abs(syVel) > 0.6;
-          const movedAway = bestIdx !== dwellRef.current.idx && bestAbs > dwellEnter;
-          if (isFast || movedAway) {
-            if (dwellRef.current.timer) window.clearTimeout(dwellRef.current.timer);
-            dwellRef.current = { active: false, idx: null, timer: null };
-            animate(snapMV, 0, { type: 'spring', stiffness: 260, damping: 34 });
-          } else {
-            // keep dwell lock; do not adjust during dwell
-            return;
-          }
-        }
-
-        // If we're extremely close to center and not moving excessively fast, trigger dwell regardless of direction
-        if (!dwellRef.current.active && bestAbs < dwellEnter && vel <= dwellVelMax) {
+        const threshold = delta * 0.35;
+        if (bestAbs < threshold) {
           const a = baseAngles[bestIdx] + raw;
           const d = a - centerRefDeg;
           const norm = (((d % 360) + 540) % 360) - 180;
           const target = -norm;
-          dwellRef.current.active = true;
-          dwellRef.current.idx = bestIdx;
-          // Gently settle into center for a smooth "attach" feel
-          animate(snapMV, target, { type: 'spring', stiffness: 110, damping: 30 });
-          dwellRef.current.timer = window.setTimeout(() => {
-            dwellRef.current = { active: false, idx: null, timer: null };
-            // Smoothly release after dwell
-            animate(snapMV, 0, { type: 'spring', stiffness: 85, damping: 38 });
-          }, dwellMs);
-          return;
-        }
-
-        if ((vel <= velThreshold && bestAbs < threshold) || (nearWhileScrolling && bestAbs < threshold * 0.4)) {
-          const a = baseAngles[bestIdx] + raw;
-          const d = a - centerRefDeg;
-          const norm = (((d % 360) + 540) % 360) - 180;
-          const target = -norm;
-          // if we're essentially centered, lock in precisely and stop
-          if (Math.abs(norm) < 0.8) {
+          dwellRef.current = { active: true, idx: bestIdx };
+          if (Math.abs(target) < 0.2) {
+            stopSnapAnim();
             snapMV.set(target);
-            // Initiate a brief dwell to create an ease-in/ease-out pause at center
-            if (!dwellRef.current.active && bestAbs < dwellEnter && vel <= dwellVelMax) {
-              dwellRef.current.active = true;
-              dwellRef.current.idx = bestIdx;
-              // Ensure we stay centered during dwell
-              snapMV.set(target);
-              dwellRef.current.timer = window.setTimeout(() => {
-                // release with a gentle spring for smooth ease out
-                dwellRef.current = { active: false, idx: null, timer: null };
-                animate(snapMV, 0, { type: 'spring', stiffness: 85, damping: 38 });
-              }, dwellMs);
-            }
           } else {
-            // Proximity-weighted magnet: stronger and snappier as dots get closer
-            const proximity = Math.min(1, Math.max(0, 1 - bestAbs / Math.max(0.001, threshold)));
-            const stiff = 120 + Math.pow(proximity, 1.3) * 240; // 120..360
-            const damp = 40 + Math.pow(proximity, 0.9) * 10;     // 40..50
-            // If extremely close, hard-lock to avoid micro jitter
-            if (bestAbs < threshold * 0.15) {
-              snapMV.set(target);
-            } else {
-              animate(snapMV, Math.abs(target) < 0.2 ? 0 : target, {
-                type: 'spring',
-                stiffness: stiff,
-                damping: damp,
-              });
-            }
+            stopSnapAnim();
+            snapAnimRef.current = animate(snapMV, target, {
+              type: 'spring', stiffness: 160, damping: 36,
+              onComplete: () => { commitSnapToBase(); },
+            });
           }
         } else {
-          animate(snapMV, 0, { type: 'spring', stiffness: 260, damping: 34 });
+          if (dwellRef.current.active) dwellRef.current = { active: false, idx: null };
+          commitSnapToBase();
         }
       };
-      // Instant check when stopping: if velocity just dropped below threshold, run immediately
-  const currentVel = Math.abs(angleSlowed.getVelocity());
+      // Gate snapping by velocity: only check when we enter idle, and re-check after a short pause
+      const currentVel = Math.abs(angleSlowed.getVelocity());
+      const syVel = scrollYProgress.getVelocity ? scrollYProgress.getVelocity() : 0;
       const prevVel = prevVelRef.current;
       prevVelRef.current = currentVel;
-      if (prevVel > 20 && currentVel <= 20) {
-        runCheck();
-      } else {
-        // fallback idle check
-        timeoutId = window.setTimeout(runCheck, 120);
+      const moving = currentVel > velIdle || Math.abs(syVel) > syIdle;
+      if (moving) {
+        // release immediately if moving
+        if (dwellRef.current.active) dwellRef.current = { active: false, idx: null };
+        commitSnapToBase();
+        lastMoveAtRef.current = Date.now();
+        return;
       }
+      // If we just crossed into idle, run immediately, else debounce once more
+      if (prevVel > velIdle && currentVel <= velIdle) {
+        runCheck();
+      }
+      timeoutId = window.setTimeout(runCheck, 120);
     };
 
   const unsub = angleSlowed.on('change', onChange);
     return () => {
       if (timeoutId) window.clearTimeout(timeoutId);
-      if (dwellRef.current.timer) window.clearTimeout(dwellRef.current.timer);
+      stopSnapAnim();
       unsub();
     };
-  }, [angleSlowed, baseAngles, endEff, isReduced, n, snapMV, startEff, span, scrollYProgress]);
+  }, [angleSlowed, baseAngles, endEff, isReduced, n, snapMV, startEff, span, scrollYProgress, stopSnapAnim]);
 
   return (
     <section
@@ -1068,7 +1045,7 @@ export default function Page() {
     startAngle={-90}
     endAngle={90}
     orbitDirection="ccw"
-    initialAngleOffset={90}
+    initialAngleOffset={-90}
     arcStrokeWidth={96}
     arcStroke="#E5E7EB"
     centerContentAtStart
