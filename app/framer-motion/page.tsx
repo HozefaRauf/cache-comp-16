@@ -331,7 +331,7 @@ function SemiCircleCarousel({
   }, []);
   const width = vw ?? 0;
   const isMobile = width < 768;
-  const isTablet = width >= 768 && width <= 1024;
+  const isTablet = width >= 768 && width <= 920;
   const isHandheld = isMobile || isTablet; // treat tablets like mobile for layout/behavior
   const R = vw ? (isHandheld ? Math.round(vw / 2) : Math.round(vw * 0.36)) : radius; // handheld: span full width; else 36vw
   // Responsive arc stroke: slimmer on small screens for a cleaner handheld look
@@ -386,15 +386,20 @@ function SemiCircleCarousel({
     if (orbitDirection === 'ccw') return Math.max(0, last + effectiveInitialOffset - centerRefDeg);
     return Math.max(0, centerRefDeg - last - effectiveInitialOffset);
   })();
+  // Desktop: ensure the last item also reaches the fixed point before the pin releases
+  const requiredSweepDesktop = (() => {
+    const last = baseAngles[lastIdx];
+    if (orbitDirection === 'ccw') return Math.max(0, last + effectiveInitialOffset - centerRefDeg);
+    return Math.max(0, centerRefDeg - last - effectiveInitialOffset);
+  })();
   // Handheld: use entire pin to exactly reach the last item center (no tail/dead zone)
   const paceProgressMobile = useTransform(scrollYProgress, (u) => {
     return easeInOutCubic(Math.max(0, Math.min(1, u))); // 0..1
   });
   // Map 0..1 -> 0..requiredSweepHandheld (handheld)
   const angleOffsetBaseMobile = useTransform(paceProgressMobile, (p) => p * requiredSweepHandheld);
-  // Desktop: keep previous full-sweep pacing across the entire pin height
-  // Desktop: add a small inert tail at the end of the pin for a gentle fade-out
-  const tailPctDesktop = 0.2; // 6% of pin height
+  // Desktop: keep full-sweep pacing and add a small tail so the last card can fully settle before release
+  const tailPctDesktop = 0.12; // a little longer tail so normal scroll resumes only after the last card is centered
   const paceProgressDesktop = useTransform(scrollYProgress, (u) => {
     const uu = Math.max(0, Math.min(1, u));
     const cutoff = Math.max(0.01, 1 - tailPctDesktop);
@@ -404,7 +409,7 @@ function SemiCircleCarousel({
     }
     return 1; // hold completed during tail range
   });
-  const angleOffsetBaseDesktop = useTransform(paceProgressDesktop, (p) => p * totalSweep);
+  const angleOffsetBaseDesktop = useTransform(paceProgressDesktop, (p) => p * requiredSweepDesktop);
   const angleOffsetBase = isHandheld ? angleOffsetBaseMobile : angleOffsetBaseDesktop;
   const signed = useTransform(angleOffsetBase, (v) => (orbitDirection === 'ccw' ? -v : v));
   const angleOffset = useTransform(signed, (v) => v + effectiveInitialOffset);
@@ -412,8 +417,9 @@ function SemiCircleCarousel({
   const zeroMV = useMotionValue(effectiveInitialOffset);
   // Smooth the scroll-derived angle. Use extra-smooth spring before the 4th card passes center,
   // then blend to the normal spring for a snappier feel afterwards.
-  const angleSmoothedFast = useSpring(angleOffset, { stiffness: 90, damping: 30, mass: 1.05 });
-  const angleSmoothedSlow = useSpring(angleOffset, { stiffness: 55, damping: 32, mass: 1.08 });
+  // Moderately tight springs for quicker stop without jitter
+  const angleSmoothedFast = useSpring(angleOffset, { stiffness: 150, damping: 15, mass: 1.1 });
+  const angleSmoothedSlow = useSpring(angleOffset, { stiffness: 90, damping: 40, mass: 1.04 });
   // Spring blending: mobile keeps gentler spring; desktop blends to faster spring after a breakpoint
   const smoothMixMobile = useTransform(scrollYProgress, () => 0);
   const smoothMixDesktop = useTransform(scrollYProgress, (u) => {
@@ -435,7 +441,9 @@ function SemiCircleCarousel({
     const raw = vals[1] as number;
     const u = Math.max(0, Math.min(1, vals[2] as number));
   if (isHandheld) return blended; // handheld keeps gentler spring all the way (with end-tail handled above)
-    const start = 0.985; // begin crossfade at 98.5%
+    // Begin crossfade slightly into the tail so we lock to raw center before release
+    const cutoff = Math.max(0.01, 1 - tailPctDesktop);
+    const start = Math.min(0.995, cutoff + 0.01); // start just after motion ends
     const end = 0.9995; // fully raw by 99.95%
     const t = Math.max(0, Math.min(1, (u - start) / Math.max(1e-6, end - start)));
     // ease the mix for a seamless transition
@@ -474,8 +482,8 @@ function SemiCircleCarousel({
     : R + contentRadiusOffset;
 
   // Dynamic slowdown near the nearest center: compress relative angle locally
-  const slowRadius = clearDeg; // start slowing within the clear zone
-  const minScale = 0.5; // slightly stronger slowdown at exact center (lower = slower)
+  const slowRadius = clearDeg * 0.7; // smaller slow zone to avoid lingering
+  const minScale = 0.75; // less slowdown at exact center so it settles quicker
   const angleSlowed = isReduced
     ? angleDriver
     : useTransform(angleDriver, (a) => {
@@ -1054,7 +1062,7 @@ export default function Page() {
   contentLeftScale={1.06}
   rightNudgePct={0.30}
     itemsSpanPct={1}
-    pinVHPerItem={100}
+    pinVHPerItem={120}
     ignoreReducedMotion
     // Show first item centered, others below it at load; then scroll brings items up
     startAngle={-90}
