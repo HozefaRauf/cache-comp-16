@@ -1038,7 +1038,7 @@ export default function Page() {
   contentRadiusOffset={860}
   contentLeftScale={1.06}
   rightNudgePct={0.30}
-    itemsSpanPct={0.4}
+    itemsSpanPct={0.35}
     pinVHPerItem={120}
     ignoreReducedMotion
     // Show first item centered, others below it at load; then scroll brings items up
